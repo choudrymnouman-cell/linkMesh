@@ -54,7 +54,7 @@ class GreetingScreenshotTest {
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "MeshConnect",
+                                text = "LinkMesh",
                                 fontSize = 28.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground
