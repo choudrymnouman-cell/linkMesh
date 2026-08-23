@@ -46,17 +46,34 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
 
         try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                wifiManager?.startLocalOnlyHotspot(object : android.net.wifi.WifiManager.LocalOnlyHotspotCallback() {
-                    override fun onStarted(reservation: android.net.wifi.WifiManager.LocalOnlyHotspotReservation?) {
-                        super.onStarted(reservation)
-                        addLog("Local hotspot started successfully! Mesh SSID is active.")
+                val hotspotPermission =
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        android.Manifest.permission.NEARBY_WIFI_DEVICES
+                    } else {
+                        android.Manifest.permission.ACCESS_FINE_LOCATION
                     }
-                    override fun onFailed(reason: Int) {
-                        super.onFailed(reason)
-                        addLog("Local hotspot start failed (reason $reason). Please enable it manually.")
-                    }
-                }, null)
+                val hasHotspotPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    hotspotPermission
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+                if (hasHotspotPermission) {
+                    wifiManager?.startLocalOnlyHotspot(object : android.net.wifi.WifiManager.LocalOnlyHotspotCallback() {
+                        override fun onStarted(reservation: android.net.wifi.WifiManager.LocalOnlyHotspotReservation?) {
+                            super.onStarted(reservation)
+                            addLog("Local hotspot started successfully! Mesh SSID is active.")
+                        }
+                        override fun onFailed(reason: Int) {
+                            super.onFailed(reason)
+                            addLog("Local hotspot start failed (reason $reason). Please enable it manually.")
+                        }
+                    }, null)
+                } else {
+                    addLog("Nearby Wi-Fi permission is required to start a local hotspot.")
+                }
             }
+        } catch (e: SecurityException) {
+            addLog("Local hotspot permission was denied.")
         } catch (e: Exception) {
             addLog("Local hotspot request failed: ${e.message}")
         }
