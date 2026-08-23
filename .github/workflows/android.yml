@@ -39,7 +39,11 @@ jobs:
         run: ./gradlew testDebugUnitTest
 
       - name: Run Android lint
-        run: ./gradlew lintDebug
+        run: |
+          ./gradlew lintDebug || {
+            cat app/build/reports/lint-results-debug.txt
+            exit 1
+          }
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug
