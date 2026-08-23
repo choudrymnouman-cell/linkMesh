@@ -41,17 +41,7 @@ class MainActivity : ComponentActivity() {
             e.printStackTrace()
         }
 
-        // Request notification permission if API level is 33+ (Tiramisu)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            try {
-                val permissionCheck = checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-                if (permissionCheck != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
+        requestMeshPermissions()
 
         // Process incoming call intents
         handleIncomingIntent(intent)
@@ -67,6 +57,25 @@ class MainActivity : ComponentActivity() {
                     MeshRootView(viewModel = meshViewModel)
                 }
             }
+        }
+    }
+
+    private fun requestMeshPermissions() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return
+
+        val requiredPermissions = buildList {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                add(android.Manifest.permission.POST_NOTIFICATIONS)
+                add(android.Manifest.permission.NEARBY_WIFI_DEVICES)
+            } else {
+                add(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }.filter {
+            checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+
+        if (requiredPermissions.isNotEmpty()) {
+            requestPermissions(requiredPermissions.toTypedArray(), 101)
         }
     }
 
