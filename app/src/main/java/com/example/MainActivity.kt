@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
                 add(android.Manifest.permission.POST_NOTIFICATIONS)
                 add(android.Manifest.permission.NEARBY_WIFI_DEVICES)
             } else {
+                add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
                 add(android.Manifest.permission.ACCESS_FINE_LOCATION)
             }
         }.filter {
