@@ -52,6 +52,10 @@ class ChatMessage {
     this.groupId,
     this.replyToId,
     Map<String, String>? reactions,
+    this.attachmentName,
+    this.attachmentPath,
+    this.attachmentMime,
+    this.attachmentSize,
   }) : reactions = reactions ?? {};
 
   final String id;
@@ -64,6 +68,10 @@ class ChatMessage {
   final String? groupId;
   final String? replyToId;
   final Map<String, String> reactions;
+  final String? attachmentName;
+  final String? attachmentPath;
+  final String? attachmentMime;
+  final int? attachmentSize;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -76,6 +84,10 @@ class ChatMessage {
         'groupId': groupId,
         'replyToId': replyToId,
         'reactions': reactions,
+        'attachmentName': attachmentName,
+        'attachmentPath': attachmentPath,
+        'attachmentMime': attachmentMime,
+        'attachmentSize': attachmentSize,
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -97,6 +109,10 @@ class ChatMessage {
       groupId: json['groupId']?.toString(),
       replyToId: json['replyToId']?.toString(),
       reactions: Map<String, String>.from(json['reactions'] is Map ? json['reactions'] as Map : const {}),
+      attachmentName: json['attachmentName']?.toString(),
+      attachmentPath: json['attachmentPath']?.toString(),
+      attachmentMime: json['attachmentMime']?.toString(),
+      attachmentSize: json['attachmentSize'] is num ? (json['attachmentSize'] as num).toInt() : null,
     );
   }
 }

@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 import '../app_state.dart';
 import '../models/models.dart';
@@ -301,11 +306,14 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final input = TextEditingController();
+  final recorder = AudioRecorder();
   ChatMessage? replyingTo;
+  bool recording = false;
 
   @override
   void dispose() {
     input.dispose();
+    unawaited(recorder.dispose());
     super.dispose();
   }
 
@@ -335,7 +343,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 if (replyingTo != null) Material(color: Theme.of(context).colorScheme.surfaceContainerHighest, child: ListTile(dense: true, leading: const Icon(Icons.reply), title: Text('Replying to ${replyingTo!.sender}'), subtitle: Text(replyingTo!.text, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: IconButton(onPressed: () => setState(() => replyingTo = null), icon: const Icon(Icons.close)))),
-                _Composer(controller: input, hint: 'Message ${widget.peer.name}', send: _send),
+                _Composer(controller: input, hint: 'Message ${widget.peer.name}', send: _send, attach: () => widget.state.pickAndSendAttachment(widget.peer), voice: _toggleVoice, recording: recording),
               ],
             ),
           );
@@ -361,6 +369,23 @@ class _ChatScreenState extends State<ChatScreen> {
       ListTile(leading: const Text('👍', style: TextStyle(fontSize: 24)), title: const Text('React'), onTap: () { widget.state.reactToMessage(widget.peer, message, '👍'); Navigator.pop(sheetContext); }),
       ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Delete from this phone'), onTap: () { widget.state.deleteMessage(message); Navigator.pop(sheetContext); }),
     ])));
+  }
+
+  Future<void> _toggleVoice() async {
+    if (recording) {
+      final path = await recorder.stop();
+      if (mounted) setState(() => recording = false);
+      if (path != null) {
+        final file = File(path);
+        if (await file.exists()) await widget.state.sendAttachment(widget.peer, name: path.split(Platform.pathSeparator).last, bytes: await file.readAsBytes(), localPath: path, mime: 'audio/mp4');
+      }
+      return;
+    }
+    if (!await recorder.hasPermission()) return;
+    final directory = await getTemporaryDirectory();
+    final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    await recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+    if (mounted) setState(() => recording = true);
   }
 
   void _call(bool video) {
@@ -402,13 +427,14 @@ class _MessageBubble extends StatelessWidget {
       alignment: message.mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Card(
         child: InkWell(
-          onTap: message.mine && message.status == DeliveryStatus.failed ? retry : null,
+          onTap: message.mine && message.status == DeliveryStatus.failed && message.attachmentPath == null ? retry : message.attachmentPath != null ? () => OpenFilex.open(message.attachmentPath!) : null,
           onLongPress: onLongPress,
           child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             if (replyMessage != null) Container(width: 220, padding: const EdgeInsets.all(7), margin: const EdgeInsets.only(bottom: 6), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(7)), child: Text('${replyMessage!.sender}: ${replyMessage!.text}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
             Text(message.text),
+            if (message.attachmentName != null) Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.all(8), decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.outlineVariant), borderRadius: BorderRadius.circular(8)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(message.attachmentMime?.startsWith('audio/') == true ? Icons.mic : message.attachmentMime?.startsWith('image/') == true ? Icons.image : Icons.attach_file), const SizedBox(width: 6), Flexible(child: Text('${message.attachmentName} • ${_fileSize(message.attachmentSize)}', overflow: TextOverflow.ellipsis))])),
             const SizedBox(height: 3),
             Row(mainAxisSize: MainAxisSize.min, children: [if (message.reactions.isNotEmpty) Text(message.reactions.values.join(' ')), const SizedBox(width: 6), Text(_clock(message.sentAt), style: Theme.of(context).textTheme.labelSmall), if (statusIcon != null) ...[const SizedBox(width: 4), Icon(statusIcon, size: 14, color: statusColor)]]),
           ]),
@@ -768,16 +794,21 @@ class DiagnosticsScreen extends StatelessWidget {
 }
 
 class _Composer extends StatelessWidget {
-  const _Composer({required this.controller, required this.hint, required this.send});
+  const _Composer({required this.controller, required this.hint, required this.send, this.attach, this.voice, this.recording = false});
   final TextEditingController controller;
   final String hint;
   final VoidCallback send;
+  final VoidCallback? attach;
+  final VoidCallback? voice;
+  final bool recording;
 
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.all(10),
         child: Row(
           children: [
+            if (attach != null) IconButton(onPressed: attach, icon: const Icon(Icons.attach_file)),
+            if (voice != null) IconButton(onPressed: voice, icon: Icon(recording ? Icons.stop_circle : Icons.mic, color: recording ? Colors.red : null)),
             Expanded(child: TextField(controller: controller, onSubmitted: (_) => send(), decoration: InputDecoration(hintText: hint, border: const OutlineInputBorder()))),
             const SizedBox(width: 8),
             IconButton.filled(onPressed: send, icon: const Icon(Icons.send)),
@@ -825,6 +856,12 @@ class _MessageSearchDelegate extends SearchDelegate<ChatMessage?> {
 }
 
 String _clock(DateTime date) => '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+String _fileSize(int? bytes) {
+  if (bytes == null) return '';
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
 
 String _time(DateTime? date) {
   if (date == null) return 'never';
