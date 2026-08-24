@@ -54,6 +54,7 @@ class AppState extends ChangeNotifier {
     await notifications.initialize();
     await callService.initialize();
     backgroundMesh.initialize();
+    await backgroundMesh.stop();
     await p2p.initialize();
     deviceId = _prefs!.getString('deviceId') ?? const Uuid().v4();
     username = _prefs!.getString('username') ?? 'Mesh User';
@@ -73,6 +74,7 @@ class AppState extends ChangeNotifier {
     await _prefs!.setString('deviceId', deviceId);
     if (!migrated) { await _persist(); await _prefs!.setBool('sqliteMigrated', true); }
     initialized = true;
+    for (final packet in await backgroundMesh.drainPackets()) { _onPacket(packet); }
     notifyListeners();
     if (onboarded) await startNetwork();
   }
