@@ -50,7 +50,9 @@ class ChatMessage {
     required this.mine,
     this.status = DeliveryStatus.delivered,
     this.groupId,
-  });
+    this.replyToId,
+    Map<String, String>? reactions,
+  }) : reactions = reactions ?? {};
 
   final String id;
   final String peerId;
@@ -60,6 +62,8 @@ class ChatMessage {
   final bool mine;
   DeliveryStatus status;
   final String? groupId;
+  final String? replyToId;
+  final Map<String, String> reactions;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -70,6 +74,8 @@ class ChatMessage {
         'mine': mine,
         'status': status.name,
         'groupId': groupId,
+        'replyToId': replyToId,
+        'reactions': reactions,
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -89,6 +95,8 @@ class ChatMessage {
       mine: json['mine'] == true,
       status: status,
       groupId: json['groupId']?.toString(),
+      replyToId: json['replyToId']?.toString(),
+      reactions: Map<String, String>.from(json['reactions'] is Map ? json['reactions'] as Map : const {}),
     );
   }
 }
