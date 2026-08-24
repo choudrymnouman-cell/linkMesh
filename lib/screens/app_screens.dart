@@ -15,6 +15,7 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final controller = TextEditingController();
+  final codeController = TextEditingController();
   int page = 0;
 
   static const data = [
@@ -26,6 +27,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void dispose() {
     controller.dispose();
+    codeController.dispose();
     super.dispose();
   }
 
@@ -56,10 +58,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               else ...[
                 TextField(controller: controller, decoration: const InputDecoration(labelText: 'Display name', border: OutlineInputBorder())),
                 const SizedBox(height: 12),
+                TextField(controller: codeController, keyboardType: TextInputType.number, maxLength: 6, obscureText: true, decoration: const InputDecoration(labelText: '6-digit private mesh code', helperText: 'Use the same code on trusted phones', border: OutlineInputBorder())),
+                const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
-                    onPressed: () => widget.state.setProfile(controller.text),
+                    onPressed: () {
+                      if (!RegExp(r'^\d{6}$').hasMatch(codeController.text.trim())) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid 6-digit mesh code.')));
+                        return;
+                      }
+                      widget.state.setProfile(controller.text, codeController.text);
+                    },
                     child: const Padding(padding: EdgeInsets.all(14), child: Text('START LINKMESH')),
                   ),
                 ),
@@ -579,6 +589,7 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
             SwitchListTile(value: state.darkMode, onChanged: state.toggleTheme, secondary: const Icon(Icons.dark_mode), title: const Text('Dark mode')),
+            ListTile(leading: const Icon(Icons.lock), title: const Text('Private mesh code'), subtitle: const Text('AES-256 encrypted trusted network'), trailing: const Icon(Icons.edit), onTap: () => _editMeshCode(context)),
             SwitchListTile(
               value: state.networkRunning,
               onChanged: (value) => value ? state.startNetwork() : state.stopNetwork(),
@@ -609,6 +620,21 @@ class SettingsScreen extends StatelessWidget {
             },
             child: const Text('Save'),
           ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  void _editMeshCode(BuildContext context) {
+    final controller = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Change private mesh code'),
+        content: TextField(controller: controller, keyboardType: TextInputType.number, maxLength: 6, obscureText: true, decoration: const InputDecoration(helperText: 'All trusted phones must use the same code')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () { if (RegExp(r'^\d{6}$').hasMatch(controller.text.trim())) { state.updateMeshCode(controller.text); Navigator.pop(context); } }, child: const Text('Save')),
         ],
       ),
     ).whenComplete(controller.dispose);
