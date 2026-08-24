@@ -14,6 +14,7 @@ class AppState extends ChangeNotifier {
   SharedPreferences? _prefs;
   String deviceId = '';
   String username = 'Mesh User';
+  String meshCode = '';
   bool onboarded = false;
   bool sosActive = false;
   bool darkMode = false;
@@ -21,6 +22,7 @@ class AppState extends ChangeNotifier {
   bool initialized = false;
   String? networkError;
   final Map<String, Completer<void>> _deliveryAcks = {};
+  final Set<String> _retryingPeers = {};
   final List<MeshPeer> peers = [];
   final List<ChatMessage> messages = [];
   final List<MeshGroup> groups = [];
@@ -31,8 +33,10 @@ class AppState extends ChangeNotifier {
     _prefs = await SharedPreferences.getInstance();
     deviceId = _prefs!.getString('deviceId') ?? const Uuid().v4();
     username = _prefs!.getString('username') ?? 'Mesh User';
+    meshCode = _prefs!.getString('meshCode') ?? '';
     onboarded = _prefs!.getBool('onboarded') ?? false;
     darkMode = _prefs!.getBool('darkMode') ?? false;
+    if (onboarded && !RegExp(r'^\d{6}$').hasMatch(meshCode)) onboarded = false;
     _decodeList('peers', (j) => MeshPeer.fromJson(j), peers);
     _decodeList('messages', (j) => ChatMessage.fromJson(j), messages);
     _decodeList('groups', (j) => MeshGroup.fromJson(j), groups);
@@ -52,7 +56,7 @@ class AppState extends ChangeNotifier {
   }
   Future<void> _persist() async {
     final p = _prefs; if (p == null) return;
-    await p.setString('username', username); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode);
+    await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode);
     await p.setString('peers', jsonEncode(peers.map((e) => e.toJson()).toList()));
     if (messages.length > 2000) messages.removeRange(0, messages.length - 2000);
     await p.setString('messages', jsonEncode(messages.map((e) => e.toJson()).toList()));
@@ -61,8 +65,9 @@ class AppState extends ChangeNotifier {
     await p.setString('calls', jsonEncode(calls.take(100).map((e) => e.toJson()).toList()));
   }
 
-  Future<void> setProfile(String name) async { username = name.trim().isEmpty ? 'Mesh User' : name.trim(); onboarded = true; await _persist(); notifyListeners(); await startNetwork(); }
+  Future<void> setProfile(String name, String code) async { username = name.trim().isEmpty ? 'Mesh User' : name.trim(); meshCode = code.trim(); if (!RegExp(r'^\d{6}$').hasMatch(meshCode)) return; onboarded = true; await _persist(); notifyListeners(); await startNetwork(); }
   Future<void> updateProfile(String name) async { username = name.trim().isEmpty ? username : name.trim(); await _persist(); notifyListeners(); if (networkRunning) { await restartNetwork(); } }
+  Future<void> updateMeshCode(String code) async { if (!RegExp(r'^\d{6}$').hasMatch(code.trim())) return; meshCode = code.trim(); await _persist(); notifyListeners(); await restartNetwork(); }
 
   Future<void> startNetwork() async {
     if (!onboarded || networkRunning) return;
@@ -76,7 +81,8 @@ class AppState extends ChangeNotifier {
         }
       }
       _sub ??= mesh.packets.listen(_onPacket);
-      await mesh.start(id: deviceId, name: username);
+      if (!RegExp(r'^\d{6}$').hasMatch(meshCode)) throw StateError('A six-digit mesh code is required.');
+      await mesh.start(id: deviceId, name: username, meshCode: meshCode);
       networkRunning = true;
       _peerSweep ??= Timer.periodic(const Duration(seconds: 5), (_) => _expirePeers());
     } catch (e) { networkRunning = false; networkError = e.toString(); }
@@ -97,6 +103,7 @@ class AppState extends ChangeNotifier {
     if (peer == null) { peer = MeshPeer(id: packet.senderId, name: packet.senderName, host: host, lastSeen: DateTime.now()); peers.add(peer); }
     else { peer.name = packet.senderName; if (host.isNotEmpty) peer.host = host; peer.online = true; peer.lastSeen = DateTime.now(); }
     if (peer.blocked) { _persist(); notifyListeners(); return; }
+    if (packet.type == 'presence') unawaited(_flushQueuedMessages(peer));
     final id = packet.payload['id']?.toString() ?? '${DateTime.now().microsecondsSinceEpoch}';
     if (packet.type == 'message') {
       if (!messages.any((m) => m.id == id)) {
@@ -167,6 +174,18 @@ class AppState extends ChangeNotifier {
     message.status = delivered ? DeliveryStatus.delivered : DeliveryStatus.failed;
     await _persist(); notifyListeners();
     return delivered;
+  }
+  Future<void> _flushQueuedMessages(MeshPeer peer) async {
+    if (!_retryingPeers.add(peer.id)) return;
+    try {
+      final queued = messages.where((m) => m.mine && m.peerId == peer.id && m.groupId == null && m.status == DeliveryStatus.failed).toList();
+      for (final message in queued) {
+        if (!peer.online) break;
+        await retryMessage(message);
+      }
+    } finally {
+      _retryingPeers.remove(peer.id);
+    }
   }
   Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId])); await _persist(); notifyListeners(); }
 
