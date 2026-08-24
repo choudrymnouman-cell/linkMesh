@@ -6,12 +6,15 @@ import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
+import 'services/local_store.dart';
 
 class AppState extends ChangeNotifier {
   final LocalMeshService mesh = LocalMeshService();
   StreamSubscription<MeshPacket>? _sub;
   Timer? _peerSweep;
   SharedPreferences? _prefs;
+  LocalStore? _store;
+  Future<void> _persistQueue = Future<void>.value();
   String deviceId = '';
   String username = 'Mesh User';
   String meshCode = '';
@@ -31,38 +34,49 @@ class AppState extends ChangeNotifier {
 
   Future<void> initialize() async {
     _prefs = await SharedPreferences.getInstance();
+    _store = await LocalStore.open();
     deviceId = _prefs!.getString('deviceId') ?? const Uuid().v4();
     username = _prefs!.getString('username') ?? 'Mesh User';
     meshCode = _prefs!.getString('meshCode') ?? '';
     onboarded = _prefs!.getBool('onboarded') ?? false;
     darkMode = _prefs!.getBool('darkMode') ?? false;
     if (onboarded && !RegExp(r'^\d{6}$').hasMatch(meshCode)) onboarded = false;
-    _decodeList('peers', (j) => MeshPeer.fromJson(j), peers);
-    _decodeList('messages', (j) => ChatMessage.fromJson(j), messages);
-    _decodeList('groups', (j) => MeshGroup.fromJson(j), groups);
-    _decodeList('posts', (j) => CommunityPost.fromJson(j), posts);
-    _decodeList('calls', (j) => CallRecord.fromJson(j), calls);
+    final migrated = _prefs!.getBool('sqliteMigrated') ?? false;
+    await _loadList('peers', (j) => MeshPeer.fromJson(j), peers, migrated);
+    await _loadList('messages', (j) => ChatMessage.fromJson(j), messages, migrated);
+    await _loadList('groups', (j) => MeshGroup.fromJson(j), groups, migrated);
+    await _loadList('posts', (j) => CommunityPost.fromJson(j), posts, migrated);
+    await _loadList('calls', (j) => CallRecord.fromJson(j), calls, migrated);
     if (groups.isEmpty) groups.add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId]));
     if (posts.isEmpty) posts.add(CommunityPost(id: 'welcome', author: 'LinkMesh', text: 'Local mesh ready. Nearby devices can discover this phone while the app is open.', createdAt: DateTime.now()));
     await _prefs!.setString('deviceId', deviceId);
+    if (!migrated) { await _persist(); await _prefs!.setBool('sqliteMigrated', true); }
     initialized = true;
     notifyListeners();
     if (onboarded) await startNetwork();
   }
 
-  void _decodeList<T>(String key, T Function(Map<String, dynamic>) parse, List<T> target) {
+  Future<void> _loadList<T>(String key, T Function(Map<String, dynamic>) parse, List<T> target, bool migrated) async {
+    if (migrated) {
+      target.addAll((await _store!.readCollection(key)).map(parse));
+      return;
+    }
     final raw = _prefs?.getString(key); if (raw == null) return;
-    try { target.addAll((jsonDecode(raw) as List).map((e) => parse(Map<String, dynamic>.from(e as Map)))); } catch (_) {}
+    try { target.addAll((jsonDecode(raw) as List).map((e) => parse(Map<String, dynamic>.from(e as Map)))); } catch (_) { /* Ignore malformed legacy data during one-time migration. */ }
   }
-  Future<void> _persist() async {
+  Future<void> _persist() {
+    _persistQueue = _persistQueue.then((_) => _persistNow(), onError: (_) => _persistNow());
+    return _persistQueue;
+  }
+  Future<void> _persistNow() async {
     final p = _prefs; if (p == null) return;
     await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode);
-    await p.setString('peers', jsonEncode(peers.map((e) => e.toJson()).toList()));
     if (messages.length > 2000) messages.removeRange(0, messages.length - 2000);
-    await p.setString('messages', jsonEncode(messages.map((e) => e.toJson()).toList()));
-    await p.setString('groups', jsonEncode(groups.map((e) => e.toJson()).toList()));
-    await p.setString('posts', jsonEncode(posts.take(200).map((e) => e.toJson()).toList()));
-    await p.setString('calls', jsonEncode(calls.take(100).map((e) => e.toJson()).toList()));
+    await _store!.replaceCollection('peers', peers.map((e) => e.toJson()));
+    await _store!.replaceCollection('messages', messages.map((e) => e.toJson()));
+    await _store!.replaceCollection('groups', groups.map((e) => e.toJson()));
+    await _store!.replaceCollection('posts', posts.take(200).map((e) => e.toJson()));
+    await _store!.replaceCollection('calls', calls.take(100).map((e) => e.toJson()));
   }
 
   Future<void> setProfile(String name, String code) async { username = name.trim().isEmpty ? 'Mesh User' : name.trim(); meshCode = code.trim(); if (!RegExp(r'^\d{6}$').hasMatch(meshCode)) return; onboarded = true; await _persist(); notifyListeners(); await startNetwork(); }
@@ -209,7 +223,7 @@ class AppState extends ChangeNotifier {
   }
   Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId])); await _persist(); notifyListeners(); }
 
-  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); mesh.dispose(); super.dispose(); }
+  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); mesh.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
 }
 
 extension FirstOrNullState<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }
