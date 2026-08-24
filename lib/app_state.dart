@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
 import 'services/local_store.dart';
@@ -29,6 +31,7 @@ class AppState extends ChangeNotifier {
   String? networkError;
   final Map<String, Completer<void>> _deliveryAcks = {};
   final Set<String> _retryingPeers = {};
+  final Map<String, _IncomingAttachment> _incomingAttachments = {};
   final List<MeshPeer> peers = [];
   final List<ChatMessage> messages = [];
   final List<MeshGroup> groups = [];
@@ -145,6 +148,24 @@ class AppState extends ChangeNotifier {
           target.reactions[packet.senderId] = emoji;
         }
       }
+    } else if (packet.type == 'file_start') {
+      final total = int.tryParse('${packet.payload['totalChunks']}') ?? 0;
+      final size = int.tryParse('${packet.payload['size']}') ?? 0;
+      if (total > 0 && total <= 256 && size > 0 && size <= 5 * 1024 * 1024) {
+        _incomingAttachments[id] = _IncomingAttachment(name: _safeFileName(packet.payload['name']?.toString() ?? 'attachment.bin'), mime: packet.payload['mime']?.toString() ?? 'application/octet-stream', size: size, totalChunks: total);
+      }
+      return;
+    } else if (packet.type == 'file_chunk') {
+      final incoming = _incomingAttachments[id];
+      final index = int.tryParse('${packet.payload['index']}') ?? -1;
+      if (incoming != null && index >= 0 && index < incoming.totalChunks && !incoming.chunks.containsKey(index)) {
+        try { incoming.chunks[index] = base64Decode(packet.payload['data']?.toString() ?? ''); } on FormatException { _incomingAttachments.remove(id); }
+      }
+      return;
+    } else if (packet.type == 'file_end') {
+      final incoming = _incomingAttachments.remove(id);
+      if (incoming != null && incoming.chunks.length == incoming.totalChunks) unawaited(_finishIncomingAttachment(packet, peer, host, id, incoming));
+      return;
     } else if (packet.type == 'group_message' && !messages.any((m) => m.id == id)) {
       final groupId = packet.payload['groupId']?.toString();
       if (groupId != null) messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, groupId: groupId));
@@ -233,6 +254,56 @@ class AppState extends ChangeNotifier {
     await mesh.sendToHost(peer.host, 'reaction', {'id': message.id, 'emoji': emoji});
     await _persist(); notifyListeners();
   }
+  Future<bool> pickAndSendAttachment(MeshPeer peer) async {
+    final result = await FilePicker.platform.pickFiles(withData: true);
+    final file = result?.files.single;
+    final bytes = file?.bytes;
+    if (file == null || bytes == null) return false;
+    return sendAttachment(peer, name: file.name, bytes: bytes, localPath: file.path);
+  }
+  Future<bool> sendAttachment(MeshPeer peer, {required String name, required List<int> bytes, String? localPath, String? mime}) async {
+    if (bytes.isEmpty || bytes.length > 5 * 1024 * 1024 || peer.blocked) return false;
+    const chunkSize = 24 * 1024;
+    final id = const Uuid().v4();
+    final cleanName = _safeFileName(name);
+    final detectedMime = mime ?? _mimeForName(cleanName);
+    var storedPath = localPath;
+    if (storedPath == null) {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/${id}_$cleanName');
+      await file.writeAsBytes(bytes, flush: true);
+      storedPath = file.path;
+    }
+    final total = (bytes.length / chunkSize).ceil();
+    final message = ChatMessage(id: id, peerId: peer.id, sender: username, text: detectedMime.startsWith('audio/') ? 'Voice note' : cleanName, sentAt: DateTime.now(), mine: true, status: DeliveryStatus.pending, attachmentName: cleanName, attachmentPath: storedPath, attachmentMime: detectedMime, attachmentSize: bytes.length);
+    messages.add(message); notifyListeners();
+    final ack = Completer<void>();
+    _deliveryAcks[id] = ack;
+    var sent = await mesh.sendToHost(peer.host, 'file_start', {'id': id, 'name': cleanName, 'mime': detectedMime, 'size': bytes.length, 'totalChunks': total});
+    for (var index = 0; index < total && sent; index++) {
+      final start = index * chunkSize;
+      final end = min(start + chunkSize, bytes.length);
+      sent = await mesh.sendToHost(peer.host, 'file_chunk', {'id': id, 'index': index, 'data': base64Encode(bytes.sublist(start, end))});
+    }
+    if (sent) sent = await mesh.sendToHost(peer.host, 'file_end', {'id': id});
+    var delivered = false;
+    if (sent) { try { await ack.future.timeout(const Duration(seconds: 15)); delivered = true; } on TimeoutException { /* Keep the transfer failed and retryable. */ } }
+    _deliveryAcks.remove(id);
+    message.status = delivered ? DeliveryStatus.delivered : DeliveryStatus.failed;
+    await _persist(); notifyListeners();
+    return delivered;
+  }
+  Future<void> _finishIncomingAttachment(MeshPacket packet, MeshPeer peer, String host, String id, _IncomingAttachment incoming) async {
+    final bytes = <int>[];
+    for (var index = 0; index < incoming.totalChunks; index++) { bytes.addAll(incoming.chunks[index]!); }
+    if (bytes.length != incoming.size) return;
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/${id}_${incoming.name}');
+    await file.writeAsBytes(bytes, flush: true);
+    if (!messages.any((message) => message.id == id)) messages.add(ChatMessage(id: id, peerId: peer.id, sender: packet.senderName, text: incoming.mime.startsWith('audio/') ? 'Voice note' : incoming.name, sentAt: DateTime.now(), mine: false, attachmentName: incoming.name, attachmentPath: file.path, attachmentMime: incoming.mime, attachmentSize: incoming.size));
+    if (host.isNotEmpty) await mesh.sendToHost(host, 'ack', {'id': id});
+    await _persist(); notifyListeners();
+  }
   Future<bool> openSystemSettings() => openAppSettings();
   Future<bool> retryMessage(ChatMessage message) async {
     if (!message.mine || message.status != DeliveryStatus.failed) return false;
@@ -270,3 +341,25 @@ class AppState extends ChangeNotifier {
 }
 
 extension FirstOrNullState<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }
+
+class _IncomingAttachment {
+  _IncomingAttachment({required this.name, required this.mime, required this.size, required this.totalChunks});
+  final String name;
+  final String mime;
+  final int size;
+  final int totalChunks;
+  final Map<int, List<int>> chunks = {};
+}
+
+String _safeFileName(String name) => name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_').substring(0, min(name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_').length, 80));
+String _mimeForName(String name) {
+  final lower = name.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.mp4')) return 'video/mp4';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  return 'application/octet-stream';
+}
