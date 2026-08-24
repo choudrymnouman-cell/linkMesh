@@ -116,7 +116,13 @@ class AppState extends ChangeNotifier {
     } else if (packet.type == 'reaction') {
       final target = messages.where((m) => m.id == id).firstOrNull;
       final emoji = packet.payload['emoji']?.toString() ?? '';
-      if (target != null) { if (emoji.isEmpty) target.reactions.remove(packet.senderId); else target.reactions[packet.senderId] = emoji; }
+      if (target != null) {
+        if (emoji.isEmpty) {
+          target.reactions.remove(packet.senderId);
+        } else {
+          target.reactions[packet.senderId] = emoji;
+        }
+      }
     } else if (packet.type == 'group_message' && !messages.any((m) => m.id == id)) {
       final groupId = packet.payload['groupId']?.toString();
       if (groupId != null) messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, groupId: groupId));
@@ -162,7 +168,11 @@ class AppState extends ChangeNotifier {
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
   Future<void> deleteMessage(ChatMessage message) async { messages.removeWhere((m) => m.id == message.id); await _persist(); notifyListeners(); }
   Future<void> reactToMessage(MeshPeer peer, ChatMessage message, String emoji) async {
-    if (emoji.isEmpty) message.reactions.remove(deviceId); else message.reactions[deviceId] = emoji;
+    if (emoji.isEmpty) {
+      message.reactions.remove(deviceId);
+    } else {
+      message.reactions[deviceId] = emoji;
+    }
     await mesh.sendToHost(peer.host, 'reaction', {'id': message.id, 'emoji': emoji});
     await _persist(); notifyListeners();
   }
