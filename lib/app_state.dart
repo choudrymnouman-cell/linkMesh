@@ -14,10 +14,13 @@ import 'services/local_mesh_service.dart';
 import 'services/local_store.dart';
 import 'services/secure_mesh_codec.dart';
 import 'services/notification_service.dart';
+import 'services/call_service.dart';
 
 class AppState extends ChangeNotifier {
+  AppState() { callService = CallService(_sendCallSignal); callService.addListener(notifyListeners); }
   final LocalMeshService mesh = LocalMeshService();
   final NotificationService notifications = NotificationService();
+  late final CallService callService;
   StreamSubscription<MeshPacket>? _sub;
   Timer? _peerSweep;
   SharedPreferences? _prefs;
@@ -45,6 +48,7 @@ class AppState extends ChangeNotifier {
     _prefs = await SharedPreferences.getInstance();
     _store = await LocalStore.open();
     await notifications.initialize();
+    await callService.initialize();
     deviceId = _prefs!.getString('deviceId') ?? const Uuid().v4();
     username = _prefs!.getString('username') ?? 'Mesh User';
     meshCode = _prefs!.getString('meshCode') ?? '';
@@ -141,7 +145,11 @@ class AppState extends ChangeNotifier {
         unawaited(notifications.showMessage(packet.senderName, packet.payload['text']?.toString() ?? 'New encrypted message'));
       }
       // Always acknowledge retries; the message itself remains de-duplicated.
-      if (host.isNotEmpty) unawaited(mesh.sendToHost(host, 'ack', {'id': id}));
+      if (packet.payload['relayed'] == true) {
+        unawaited(mesh.sendRoutedPacket(packet.senderId, 'ack', {'id': id}));
+      } else if (host.isNotEmpty) {
+        unawaited(mesh.sendToHost(host, 'ack', {'id': id}));
+      }
     } else if (packet.type == 'ack') {
       _deliveryAcks.remove(id)?.complete();
     } else if (packet.type == 'reaction') {
@@ -192,6 +200,9 @@ class AppState extends ChangeNotifier {
       final detail = 'SOS: ${packet.payload['text'] ?? 'Emergency assistance requested.'}${latitude == null || longitude == null ? '' : ' Location: $latitude, $longitude'}';
       posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: detail, createdAt: DateTime.now(), emergency: true, latitude: latitude, longitude: longitude));
       unawaited(notifications.showSos(packet.senderName, detail));
+    } else if (packet.type == 'call_signal') {
+      unawaited(callService.receive(packet.senderId, packet.senderName, packet.payload));
+      if (packet.payload['kind'] == 'offer') unawaited(notifications.showMessage(packet.senderName, packet.payload['video'] == true ? 'Incoming encrypted video call' : 'Incoming encrypted voice call'));
     } else if (packet.type == 'post') {
       posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: packet.payload['text']?.toString() ?? '', createdAt: DateTime.now()));
     }
@@ -214,13 +225,17 @@ class AppState extends ChangeNotifier {
         // Retry: the receiver de-duplicates by message ID.
       }
     }
+    if (!delivered) {
+      await mesh.sendRoutedPacket(peer.id, 'message', {'id': id, 'text': clean, 'replyToId': replyToId});
+      try { await ack.future.timeout(const Duration(seconds: 8)); delivered = true; } on TimeoutException { /* No route currently reaches this peer. */ }
+    }
     _deliveryAcks.remove(id);
     m.status = delivered ? DeliveryStatus.delivered : DeliveryStatus.failed;
     await _persist(); notifyListeners(); return delivered;
   }
-  Future<void> sendGroupMessage(MeshGroup group, String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); messages.add(ChatMessage(id: id, peerId: deviceId, sender: username, text: clean, sentAt: DateTime.now(), mine: true, groupId: group.id)); notifyListeners(); if (group.isPrivate) { for (final memberId in group.members.where((id) => id != deviceId)) { final peer = peers.where((p) => p.id == memberId && p.online && !p.blocked).firstOrNull; if (peer != null) await mesh.sendToHost(peer.host, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); } } else { await mesh.broadcastPacket('group_message', {'id': id, 'groupId': group.id, 'text': clean}); } await _persist(); }
-  Future<void> postCommunity(String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); posts.insert(0, CommunityPost(id: id, author: username, text: clean, createdAt: DateTime.now())); notifyListeners(); await mesh.broadcastPacket('post', {'id': id, 'text': clean}); await _persist(); }
-  Future<void> triggerSos() async { sosActive = true; Position? position; try { var permission = await Geolocator.checkPermission(); if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission(); if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) position = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 8))); } on Object { position = null; } final id = const Uuid().v4(); final text = position == null ? 'SOS ACTIVE — emergency assistance requested.' : 'SOS ACTIVE — location ${position.latitude}, ${position.longitude}'; posts.insert(0, CommunityPost(id: id, author: username, text: text, createdAt: DateTime.now(), emergency: true, latitude: position?.latitude, longitude: position?.longitude)); notifyListeners(); await mesh.broadcastPacket('sos', {'id': id, 'text': 'Emergency assistance requested.', 'latitude': position?.latitude, 'longitude': position?.longitude}); await _persist(); }
+  Future<void> sendGroupMessage(MeshGroup group, String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); messages.add(ChatMessage(id: id, peerId: deviceId, sender: username, text: clean, sentAt: DateTime.now(), mine: true, groupId: group.id)); notifyListeners(); if (group.isPrivate) { for (final memberId in group.members.where((id) => id != deviceId)) { final peer = peers.where((p) => p.id == memberId && p.online && !p.blocked).firstOrNull; final sent = peer != null && await mesh.sendToHost(peer.host, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); if (!sent) await mesh.sendRoutedPacket(memberId, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); } } else { await mesh.broadcastRoutedPacket('group_message', {'id': id, 'groupId': group.id, 'text': clean}); } await _persist(); }
+  Future<void> postCommunity(String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); posts.insert(0, CommunityPost(id: id, author: username, text: clean, createdAt: DateTime.now())); notifyListeners(); await mesh.broadcastRoutedPacket('post', {'id': id, 'text': clean}); await _persist(); }
+  Future<void> triggerSos() async { sosActive = true; Position? position; try { var permission = await Geolocator.checkPermission(); if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission(); if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) position = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 8))); } on Object { position = null; } final id = const Uuid().v4(); final text = position == null ? 'SOS ACTIVE — emergency assistance requested.' : 'SOS ACTIVE — location ${position.latitude}, ${position.longitude}'; posts.insert(0, CommunityPost(id: id, author: username, text: text, createdAt: DateTime.now(), emergency: true, latitude: position?.latitude, longitude: position?.longitude)); notifyListeners(); await mesh.broadcastRoutedPacket('sos', {'id': id, 'text': 'Emergency assistance requested.', 'latitude': position?.latitude, 'longitude': position?.longitude}); await _persist(); }
   void stopSos() { sosActive = false; notifyListeners(); }
 
   Future<void> createGroup(String name, String description) async { final g = MeshGroup(id: const Uuid().v4(), name: name.trim().isEmpty ? 'Mesh Group' : name.trim(), description: description.trim(), members: [deviceId], ownerId: deviceId, adminIds: [deviceId]); groups.add(g); notifyListeners(); await _persist(); }
@@ -231,7 +246,9 @@ class AppState extends ChangeNotifier {
   Future<void> _sendGroupState(MeshGroup group, String type, {MeshPeer? only}) async { final payload = {'groupId': group.id, 'name': group.name, 'description': group.description, 'members': group.members, 'ownerId': group.ownerId, 'adminIds': group.adminIds, 'isPrivate': group.isPrivate}; final targets = only == null ? peers.where((p) => group.members.contains(p.id) && p.online && !p.blocked) : [only]; for (final peer in targets) { await mesh.sendToHost(peer.host, type, payload); } }
   Future<void> toggleFavorite(MeshPeer peer) async { peer.favorite = !peer.favorite; await _persist(); notifyListeners(); }
   Future<void> toggleBlocked(MeshPeer peer) async { peer.blocked = !peer.blocked; await _persist(); notifyListeners(); }
-  Future<void> addCall(MeshPeer peer, bool video) async { calls.insert(0, CallRecord(id: const Uuid().v4(), peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); notifyListeners(); }
+  Future<void> startCall(MeshPeer peer, bool video) async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) return; if (video) { final camera = await Permission.camera.request(); if (!camera.isGranted) return; } final id = const Uuid().v4(); calls.insert(0, CallRecord(id: id, peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); await callService.start(targetId: peer.id, targetName: peer.name, withVideo: video, id: id); notifyListeners(); }
+  Future<void> acceptCall() async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) { await callService.reject(); return; } if (callService.video) { final camera = await Permission.camera.request(); if (!camera.isGranted) { await callService.reject(); return; } } calls.insert(0, CallRecord(id: callService.callId ?? const Uuid().v4(), peerName: callService.peerName ?? 'Peer', video: callService.video, startedAt: DateTime.now(), outgoing: false)); await _persist(); await callService.accept(); notifyListeners(); }
+  Future<void> _sendCallSignal(String targetId, Map<String, dynamic> signal) async { final peer = peers.where((p) => p.id == targetId && p.online && !p.blocked).firstOrNull; final sent = peer != null && await mesh.sendToHost(peer.host, 'call_signal', signal); if (!sent) await mesh.sendRoutedPacket(targetId, 'call_signal', signal); }
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
   Future<bool> exportEncryptedBackup() async {
     final backup = <String, dynamic>{
@@ -362,7 +379,7 @@ class AppState extends ChangeNotifier {
   }
   Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false)); await _persist(); notifyListeners(); }
 
-  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); mesh.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
+  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); unawaited(callService.end(notifyPeer: false)); callService.removeListener(notifyListeners); mesh.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
 }
 
 extension FirstOrNullState<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }

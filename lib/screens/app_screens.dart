@@ -7,6 +7,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../app_state.dart';
 import '../models/models.dart';
@@ -388,14 +389,30 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() => recording = true);
   }
 
-  void _call(bool video) {
-    widget.state.addCall(widget.peer, video);
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(video ? 'Video call' : 'Voice call'),
-        content: const Text('Call signaling/media transport is not available on the local Dart mesh yet. The attempt is saved in call history.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+  void _call(bool video) { widget.state.startCall(widget.peer, video); }
+}
+
+class CallScreen extends StatelessWidget {
+  const CallScreen({super.key, required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final call = state.callService;
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF101522),
+        body: SafeArea(child: Stack(children: [
+          if (call.video && !call.incoming)
+            Positioned.fill(child: RTCVideoView(call.remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
+          else
+            Center(child: Column(mainAxisSize: MainAxisSize.min, children: [const CircleAvatar(radius: 56, child: Icon(Icons.person, size: 64)), const SizedBox(height: 24), Text(call.peerName ?? 'Nearby peer', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)), const SizedBox(height: 8), Text(call.incoming ? 'Incoming ${call.video ? 'video' : 'voice'} call' : call.connected ? 'Connected' : 'Connecting over LinkMesh…', style: const TextStyle(color: Colors.white70))])),
+          if (call.video && !call.incoming) Positioned(top: 18, right: 18, width: 110, height: 160, child: ClipRRect(borderRadius: BorderRadius.circular(16), child: RTCVideoView(call.localRenderer, mirror: true, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))),
+          Positioned(left: 20, right: 20, bottom: 32, child: call.incoming
+              ? Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [FloatingActionButton(backgroundColor: Colors.red, heroTag: 'reject', onPressed: call.reject, child: const Icon(Icons.call_end)), FloatingActionButton(backgroundColor: Colors.green, heroTag: 'accept', onPressed: state.acceptCall, child: const Icon(Icons.call))])
+              : Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [FloatingActionButton(heroTag: 'mute', onPressed: call.toggleMute, child: Icon(call.muted ? Icons.mic_off : Icons.mic)), if (call.video) FloatingActionButton(heroTag: 'camera', onPressed: call.toggleCamera, child: Icon(call.cameraEnabled ? Icons.videocam : Icons.videocam_off)), if (call.video) FloatingActionButton(heroTag: 'switch', onPressed: call.switchCamera, child: const Icon(Icons.cameraswitch)), FloatingActionButton(backgroundColor: Colors.red, heroTag: 'hangup', onPressed: call.end, child: const Icon(Icons.call_end))])),
+        ])),
       ),
     );
   }
@@ -793,7 +810,7 @@ class CallHistoryScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('Call history')),
         body: state.calls.isEmpty
-            ? const _Empty('No call attempts', 'Voice/video transport is not implemented yet.')
+            ? const _Empty('No calls yet', 'Encrypted nearby voice and video calls will appear here.')
             : ListView(children: state.calls.map((record) => ListTile(leading: Icon(record.video ? Icons.videocam : Icons.call), title: Text(record.peerName), subtitle: Text(_time(record.startedAt)))).toList()),
       );
 }
