@@ -455,14 +455,15 @@ class GroupsScreen extends StatelessWidget {
         builder: (_, __) => ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            FilledButton.icon(onPressed: () => _create(context), icon: const Icon(Icons.add), label: const Text('Create & announce group')),
+            FilledButton.icon(onPressed: () => _create(context), icon: const Icon(Icons.add), label: const Text('Create private group')),
             const SizedBox(height: 10),
             ...state.groups.map(
               (group) => Card(
                 child: ListTile(
                   leading: const Icon(Icons.groups),
                   title: Text(group.name),
-                  subtitle: Text(group.description),
+                  subtitle: Text('${group.description}${group.isPrivate ? ' • ${group.members.length} private members' : ' • public'}'),
+                  trailing: state.canManageGroup(group) ? IconButton(icon: const Icon(Icons.admin_panel_settings), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupAdminScreen(state: state, group: group)))) : null,
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupChatScreen(state: state, group: group))),
                 ),
               ),
@@ -495,6 +496,36 @@ class GroupsScreen extends StatelessWidget {
     ).whenComplete(() {
       name.dispose();
       description.dispose();
+    });
+  }
+}
+
+class GroupAdminScreen extends StatelessWidget {
+  const GroupAdminScreen({super.key, required this.state, required this.group});
+  final AppState state;
+  final MeshGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(animation: state, builder: (_, __) {
+      final available = state.peers.where((peer) => !peer.blocked && !group.members.contains(peer.id)).toList();
+      return Scaffold(
+      appBar: AppBar(title: Text('${group.name} administration')),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        const Text('Members', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        ...group.members.map((id) {
+          final peer = state.peers.where((p) => p.id == id).firstOrNull;
+          final name = id == state.deviceId ? '${state.username} (you)' : peer?.name ?? id.substring(0, id.length < 8 ? id.length : 8);
+          final owner = id == group.ownerId;
+          final admin = group.adminIds.contains(id);
+          return Card(child: ListTile(title: Text(name), subtitle: Text(owner ? 'Owner' : admin ? 'Administrator' : 'Member'), trailing: id == state.deviceId || owner ? null : PopupMenuButton<String>(onSelected: (value) { if (value == 'admin') state.toggleGroupAdmin(group, id); if (value == 'remove') state.removeGroupMember(group, id); }, itemBuilder: (_) => [PopupMenuItem(value: 'admin', child: Text(admin ? 'Remove administrator' : 'Make administrator')), const PopupMenuItem(value: 'remove', child: Text('Remove member'))])));
+        }),
+        const SizedBox(height: 16),
+        const Text('Invite nearby device', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        if (available.isEmpty) const ListTile(title: Text('No available nearby devices')),
+        ...available.map((peer) => ListTile(leading: const Icon(Icons.person_add), title: Text(peer.name), subtitle: Text(peer.online ? 'Online' : 'Offline'), enabled: peer.online, onTap: peer.online ? () => state.addGroupMember(group, peer) : null)),
+      ]),
+      );
     });
   }
 }
