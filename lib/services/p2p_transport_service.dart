@@ -50,7 +50,7 @@ class P2pTransportService extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
-    if (hosting) await host.removeGroup(); else await client.disconnect();
+    if (hosting) { await host.removeGroup(); } else { await client.disconnect(); }
     hosting = false; scanning = false; status = 'Wi-Fi Direct idle'; notifyListeners();
   }
 
