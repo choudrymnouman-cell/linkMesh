@@ -28,6 +28,7 @@ class LocalMeshService {
   String? _id;
   String? _name;
   final _packets = StreamController<MeshPacket>.broadcast();
+  static const int maxPacketBytes = 64 * 1024;
 
   Stream<MeshPacket> get packets => _packets.stream;
   bool get running => _udp != null && _server != null;
@@ -46,6 +47,7 @@ class LocalMeshService {
         final received = datagram;
         if (received == null) break;
         try {
+          if (received.data.isEmpty || received.data.length > maxPacketBytes) continue;
           final packet = MeshPacket.fromJson(jsonDecode(utf8.decode(received.data)) as Map<String, dynamic>);
           if (packet.senderId.isNotEmpty && packet.senderId != _id) {
             packet.payload['host'] = received.address.address;
@@ -58,6 +60,10 @@ class LocalMeshService {
     _server!.listen((socket) {
       utf8.decoder.bind(socket).transform(const LineSplitter()).listen((line) {
         try {
+          if (line.isEmpty || utf8.encode(line).length > maxPacketBytes) {
+            socket.destroy();
+            return;
+          }
           final packet = MeshPacket.fromJson(jsonDecode(line) as Map<String, dynamic>);
           if (packet.senderId.isNotEmpty && packet.senderId != _id) {
             packet.payload['host'] = socket.remoteAddress.address;
@@ -76,7 +82,9 @@ class LocalMeshService {
     final udp = _udp;
     if (udp == null || _id == null || _name == null) return;
     final packet = MeshPacket(type: type, senderId: _id!, senderName: _name!, payload: payload);
-    udp.send(utf8.encode(jsonEncode(packet.toJson())), InternetAddress('255.255.255.255'), discoveryPort);
+    final data = utf8.encode(jsonEncode(packet.toJson()));
+    if (data.length > maxPacketBytes) throw ArgumentError('Packet is too large');
+    udp.send(data, InternetAddress('255.255.255.255'), discoveryPort);
   }
 
   Future<bool> sendToHost(String host, String type, Map<String, dynamic> payload) async {
@@ -84,7 +92,9 @@ class LocalMeshService {
     Socket? socket;
     try {
       socket = await Socket.connect(host, messagePort, timeout: const Duration(seconds: 3));
-      socket.writeln(jsonEncode(MeshPacket(type: type, senderId: _id!, senderName: _name!, payload: payload).toJson()));
+      final encoded = jsonEncode(MeshPacket(type: type, senderId: _id!, senderName: _name!, payload: payload).toJson());
+      if (utf8.encode(encoded).length > maxPacketBytes) return false;
+      socket.writeln(encoded);
       await socket.flush();
       return true;
     } catch (_) {
