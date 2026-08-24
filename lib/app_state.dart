@@ -161,7 +161,7 @@ class AppState extends ChangeNotifier {
     final sent = await mesh.sendToHost(peer.host, 'message', {'id': message.id, 'text': message.text});
     var delivered = false;
     if (sent) {
-      try { await ack.future.timeout(const Duration(seconds: 3)); delivered = true; } on TimeoutException { }
+      try { await ack.future.timeout(const Duration(seconds: 3)); delivered = true; } on TimeoutException { /* Keep failed status so the user can retry. */ }
     }
     _deliveryAcks.remove(message.id);
     message.status = delivered ? DeliveryStatus.delivered : DeliveryStatus.failed;
