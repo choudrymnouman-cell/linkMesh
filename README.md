@@ -1,21 +1,46 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# LinkMesh Offline Chat
 
-# Run and deploy your AI Studio app
+A local-first Flutter messenger recreated from the supplied native Android APK. LinkMesh is designed for nearby communication when normal internet service is unavailable. Devices discover one another on the same Wi-Fi/hotspot and exchange traffic directly over the LAN.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/fcf267e2-00ce-4f8b-97dd-a697db133ce7
+- Persistent local profile and stable node ID
+- UDP nearby-device discovery with online/offline expiry
+- Direct TCP text messaging with pending/delivered/failed status
+- Persistent chat history across restarts
+- Favorites and local blocking
+- Broadcast group creation and group messaging
+- Community broadcasts
+- SOS emergency beacon with safety disclaimer
+- Dark mode
+- Call-attempt history (voice/video media itself is not implemented)
+- Mesh diagnostics screen
+- Local data reset
+- Android Flutter scaffold and Gradle configuration
 
-## Run Locally
+## Network
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+- Discovery/broadcasts: UDP 40444
+- Direct messages: TCP 40445
+- Current transport scope: devices on the same reachable LAN/hotspot
 
+This is **not yet a true multi-hop Bluetooth/Wi-Fi Direct mesh**. A phone does not relay another phone's packet to a third phone. Voice/video media transport and file transfer are also intentionally not claimed as complete.
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
+## Run and verify
+
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```
+
+For an end-to-end test, install on two Android phones, connect both to the same Wi-Fi or one phone's hotspot, open LinkMesh, create profiles, and confirm they appear under Nearby. Send direct messages in both directions, restart each app to confirm history persists, then test community/group/SOS broadcasts.
+
+## APK CI artifact
+
+Every successful CI build now uploads `app-debug.apk` as the `linkmesh-debug-apk` GitHub Actions artifact.
+
+## Architecture note
+
+The supplied APK was a native Android application, not a Flutter APK. This repository is a clean Flutter recreation based on APK behavior and resources, not recovered original source code.

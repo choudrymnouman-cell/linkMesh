@@ -1,6 +1,0 @@
-{
-  "name": "LinkMesh",
-  "description": "An offline mesh communication network app operating via Bluetooth, Wi-Fi Direct, and dynamic routing during emergencies and disasters.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
