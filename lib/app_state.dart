@@ -15,11 +15,15 @@ import 'services/local_store.dart';
 import 'services/secure_mesh_codec.dart';
 import 'services/notification_service.dart';
 import 'services/call_service.dart';
+import 'services/background_mesh_service.dart';
+import 'services/p2p_transport_service.dart';
 
 class AppState extends ChangeNotifier {
   AppState() { callService = CallService(_sendCallSignal); callService.addListener(notifyListeners); }
   final LocalMeshService mesh = LocalMeshService();
   final NotificationService notifications = NotificationService();
+  final BackgroundMeshService backgroundMesh = BackgroundMeshService();
+  final P2pTransportService p2p = P2pTransportService();
   late final CallService callService;
   StreamSubscription<MeshPacket>? _sub;
   Timer? _peerSweep;
@@ -49,6 +53,8 @@ class AppState extends ChangeNotifier {
     _store = await LocalStore.open();
     await notifications.initialize();
     await callService.initialize();
+    backgroundMesh.initialize();
+    await p2p.initialize();
     deviceId = _prefs!.getString('deviceId') ?? const Uuid().v4();
     username = _prefs!.getString('username') ?? 'Mesh User';
     meshCode = _prefs!.getString('meshCode') ?? '';
@@ -124,6 +130,11 @@ class AppState extends ChangeNotifier {
   }
   Future<void> restartNetwork() async { await mesh.stop(); networkRunning = false; notifyListeners(); await startNetwork(); }
   Future<void> stopNetwork() async { await mesh.stop(); networkRunning = false; for (final p in peers) { p.online = false; } await _persist(); notifyListeners(); }
+  Future<void> enterBackground() async { if (!onboarded || !networkRunning || callService.active) return; await stopNetwork(); await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode); }
+  Future<void> resumeFromBackground() async { await backgroundMesh.stop(); for (final packet in await backgroundMesh.drainPackets()) { _onPacket(packet); } if (onboarded && !networkRunning) await startNetwork(); }
+  Future<void> createP2pGroup() async { await p2p.createGroup(); await restartNetwork(); }
+  Future<void> connectP2pHost(dynamic device) async { await p2p.connect(device); await restartNetwork(); }
+  Future<void> disconnectP2p() async { await p2p.disconnect(); await restartNetwork(); }
 
   void _expirePeers() {
     final now = DateTime.now(); bool changed = false;
@@ -379,7 +390,7 @@ class AppState extends ChangeNotifier {
   }
   Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false)); await _persist(); notifyListeners(); }
 
-  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); unawaited(callService.end(notifyPeer: false)); callService.removeListener(notifyListeners); mesh.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
+  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); unawaited(callService.end(notifyPeer: false)); callService.removeListener(notifyListeners); mesh.dispose(); p2p.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
 }
 
 extension FirstOrNullState<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }

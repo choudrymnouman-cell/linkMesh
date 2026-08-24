@@ -708,6 +708,7 @@ class SettingsScreen extends StatelessWidget {
               subtitle: Text(state.networkRunning ? 'Discovery active' : 'Discovery stopped'),
             ),
             ListTile(leading: const Icon(Icons.history), title: const Text('Call history'), subtitle: Text('${state.calls.length} attempts'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
+            ListTile(leading: const Icon(Icons.device_hub), title: const Text('Bluetooth & Wi-Fi Direct'), subtitle: Text(state.p2p.status), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => P2pTransportScreen(state: state)))),
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Clear local messages and history'), onTap: state.clearLocalData),
             const ListTile(leading: Icon(Icons.info_outline), title: Text('LinkMesh'), subtitle: Text('Flutter recreation • local-first messaging')),
@@ -813,6 +814,34 @@ class CallHistoryScreen extends StatelessWidget {
             ? const _Empty('No calls yet', 'Encrypted nearby voice and video calls will appear here.')
             : ListView(children: state.calls.map((record) => ListTile(leading: Icon(record.video ? Icons.videocam : Icons.call), title: Text(record.peerName), subtitle: Text(_time(record.startedAt)))).toList()),
       );
+}
+
+class P2pTransportScreen extends StatelessWidget {
+  const P2pTransportScreen({super.key, required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: state.p2p,
+    builder: (_, __) => Scaffold(
+      appBar: AppBar(title: const Text('Bluetooth & Wi-Fi Direct')),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        Card(child: ListTile(leading: const Icon(Icons.info_outline), title: Text(state.p2p.status), subtitle: const Text('Bluetooth LE discovers a nearby host; Wi-Fi Direct carries encrypted LinkMesh traffic without a router.'))),
+        const SizedBox(height: 12),
+        FilledButton.icon(onPressed: state.createP2pGroup, icon: const Icon(Icons.wifi_tethering), label: const Text('Create nearby mesh group')),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(onPressed: state.p2p.discover, icon: const Icon(Icons.bluetooth_searching), label: Text(state.p2p.scanning ? 'Scanning…' : 'Find nearby mesh groups')),
+        if (state.p2p.discoveredHosts.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          const Text('Available groups', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          ...state.p2p.discoveredHosts.map((device) => Card(child: ListTile(leading: const Icon(Icons.router), title: Text(device.toString()), trailing: const Icon(Icons.link), onTap: () => state.connectP2pHost(device)))),
+        ],
+        const SizedBox(height: 8),
+        TextButton.icon(onPressed: state.disconnectP2p, icon: const Icon(Icons.link_off), label: const Text('Disconnect Wi-Fi Direct')),
+        const Padding(padding: EdgeInsets.only(top: 16), child: Text('Android may ask for Nearby devices, Bluetooth, Wi-Fi, and Location services. LinkMesh does not upload discovered-device data.')),
+      ]),
+    ),
+  );
 }
 
 class DiagnosticsScreen extends StatelessWidget {
