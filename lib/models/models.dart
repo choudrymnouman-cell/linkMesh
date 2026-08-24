@@ -123,18 +123,27 @@ class MeshGroup {
     required this.name,
     required this.description,
     required this.members,
-  });
+    this.ownerId = '',
+    List<String>? adminIds,
+    this.isPrivate = true,
+  }) : adminIds = adminIds ?? [];
 
   final String id;
   String name;
   String description;
   final List<String> members;
+  String ownerId;
+  final List<String> adminIds;
+  bool isPrivate;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
         'description': description,
         'members': members,
+        'ownerId': ownerId,
+        'adminIds': adminIds,
+        'isPrivate': isPrivate,
       };
 
   factory MeshGroup.fromJson(Map<String, dynamic> json) => MeshGroup(
@@ -142,6 +151,9 @@ class MeshGroup {
         name: '${json['name']}',
         description: '${json['description']}',
         members: List<String>.from(json['members'] ?? const <String>[]),
+        ownerId: json['ownerId']?.toString() ?? '',
+        adminIds: List<String>.from(json['adminIds'] ?? const <String>[]),
+        isPrivate: json.containsKey('isPrivate') ? json['isPrivate'] != false : false,
       );
 }
 
@@ -152,6 +164,8 @@ class CommunityPost {
     required this.text,
     required this.createdAt,
     this.emergency = false,
+    this.latitude,
+    this.longitude,
   });
 
   final String id;
@@ -159,6 +173,8 @@ class CommunityPost {
   final String text;
   final DateTime createdAt;
   final bool emergency;
+  final double? latitude;
+  final double? longitude;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -166,6 +182,8 @@ class CommunityPost {
         'text': text,
         'createdAt': createdAt.toIso8601String(),
         'emergency': emergency,
+        'latitude': latitude,
+        'longitude': longitude,
       };
 
   factory CommunityPost.fromJson(Map<String, dynamic> json) => CommunityPost(
@@ -174,6 +192,8 @@ class CommunityPost {
         text: '${json['text']}',
         createdAt: DateTime.tryParse('${json['createdAt']}') ?? DateTime.now(),
         emergency: json['emergency'] == true,
+        latitude: json['latitude'] is num ? (json['latitude'] as num).toDouble() : null,
+        longitude: json['longitude'] is num ? (json['longitude'] as num).toDouble() : null,
       );
 }
 

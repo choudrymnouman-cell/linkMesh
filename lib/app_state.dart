@@ -8,13 +8,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:geolocator/geolocator.dart';
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
 import 'services/local_store.dart';
 import 'services/secure_mesh_codec.dart';
+import 'services/notification_service.dart';
 
 class AppState extends ChangeNotifier {
   final LocalMeshService mesh = LocalMeshService();
+  final NotificationService notifications = NotificationService();
   StreamSubscription<MeshPacket>? _sub;
   Timer? _peerSweep;
   SharedPreferences? _prefs;
@@ -41,6 +44,7 @@ class AppState extends ChangeNotifier {
   Future<void> initialize() async {
     _prefs = await SharedPreferences.getInstance();
     _store = await LocalStore.open();
+    await notifications.initialize();
     deviceId = _prefs!.getString('deviceId') ?? const Uuid().v4();
     username = _prefs!.getString('username') ?? 'Mesh User';
     meshCode = _prefs!.getString('meshCode') ?? '';
@@ -53,7 +57,8 @@ class AppState extends ChangeNotifier {
     await _loadList('groups', (j) => MeshGroup.fromJson(j), groups, migrated);
     await _loadList('posts', (j) => CommunityPost.fromJson(j), posts, migrated);
     await _loadList('calls', (j) => CallRecord.fromJson(j), calls, migrated);
-    if (groups.isEmpty) groups.add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId]));
+    for (final group in groups.where((g) => g.ownerId.isEmpty && g.members.contains(deviceId))) { group.ownerId = deviceId; if (!group.adminIds.contains(deviceId)) group.adminIds.add(deviceId); }
+    if (groups.isEmpty) groups.add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false));
     if (posts.isEmpty) posts.add(CommunityPost(id: 'welcome', author: 'LinkMesh', text: 'Local mesh ready. Nearby devices can discover this phone while the app is open.', createdAt: DateTime.now()));
     await _prefs!.setString('deviceId', deviceId);
     if (!migrated) { await _persist(); await _prefs!.setBool('sqliteMigrated', true); }
@@ -133,6 +138,7 @@ class AppState extends ChangeNotifier {
     if (packet.type == 'message') {
       if (!messages.any((m) => m.id == id)) {
         messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, replyToId: packet.payload['replyToId']?.toString()));
+        unawaited(notifications.showMessage(packet.senderName, packet.payload['text']?.toString() ?? 'New encrypted message'));
       }
       // Always acknowledge retries; the message itself remains de-duplicated.
       if (host.isNotEmpty) unawaited(mesh.sendToHost(host, 'ack', {'id': id}));
@@ -168,11 +174,24 @@ class AppState extends ChangeNotifier {
       return;
     } else if (packet.type == 'group_message' && !messages.any((m) => m.id == id)) {
       final groupId = packet.payload['groupId']?.toString();
-      if (groupId != null) messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, groupId: groupId));
-    } else if (packet.type == 'group_announce') {
-      final gid = packet.payload['groupId']?.toString() ?? ''; if (gid.isNotEmpty && !groups.any((g) => g.id == gid)) groups.add(MeshGroup(id: gid, name: packet.payload['name']?.toString() ?? 'Mesh Group', description: packet.payload['description']?.toString() ?? '', members: [deviceId, packet.senderId]));
+      final group = groups.where((g) => g.id == groupId).firstOrNull;
+      if (group != null && (!group.isPrivate || group.members.contains(deviceId))) {
+        messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, groupId: groupId));
+        unawaited(notifications.showMessage('${group.name} • ${packet.senderName}', packet.payload['text']?.toString() ?? 'New group message'));
+      }
+    } else if (packet.type == 'group_invite') {
+      final group = _groupFromPacket(packet);
+      if (group != null && group.members.contains(deviceId)) { groups.removeWhere((g) => g.id == group.id); groups.add(group); }
+    } else if (packet.type == 'group_update') {
+      final current = groups.where((g) => g.id == packet.payload['groupId']?.toString()).firstOrNull;
+      final updated = _groupFromPacket(packet);
+      if (current != null && updated != null && (current.ownerId == packet.senderId || current.adminIds.contains(packet.senderId))) { groups.remove(current); if (updated.members.contains(deviceId)) groups.add(updated); }
     } else if (packet.type == 'sos') {
-      posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: 'SOS: ${packet.payload['text'] ?? 'Emergency assistance requested.'}', createdAt: DateTime.now(), emergency: true));
+      final latitude = double.tryParse('${packet.payload['latitude']}');
+      final longitude = double.tryParse('${packet.payload['longitude']}');
+      final detail = 'SOS: ${packet.payload['text'] ?? 'Emergency assistance requested.'}${latitude == null || longitude == null ? '' : ' Location: $latitude, $longitude'}';
+      posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: detail, createdAt: DateTime.now(), emergency: true, latitude: latitude, longitude: longitude));
+      unawaited(notifications.showSos(packet.senderName, detail));
     } else if (packet.type == 'post') {
       posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: packet.payload['text']?.toString() ?? '', createdAt: DateTime.now()));
     }
@@ -199,12 +218,17 @@ class AppState extends ChangeNotifier {
     m.status = delivered ? DeliveryStatus.delivered : DeliveryStatus.failed;
     await _persist(); notifyListeners(); return delivered;
   }
-  Future<void> sendGroupMessage(MeshGroup group, String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); messages.add(ChatMessage(id: id, peerId: deviceId, sender: username, text: clean, sentAt: DateTime.now(), mine: true, groupId: group.id)); notifyListeners(); await mesh.broadcastPacket('group_message', {'id': id, 'groupId': group.id, 'text': clean}); await _persist(); }
+  Future<void> sendGroupMessage(MeshGroup group, String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); messages.add(ChatMessage(id: id, peerId: deviceId, sender: username, text: clean, sentAt: DateTime.now(), mine: true, groupId: group.id)); notifyListeners(); if (group.isPrivate) { for (final memberId in group.members.where((id) => id != deviceId)) { final peer = peers.where((p) => p.id == memberId && p.online && !p.blocked).firstOrNull; if (peer != null) await mesh.sendToHost(peer.host, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); } } else { await mesh.broadcastPacket('group_message', {'id': id, 'groupId': group.id, 'text': clean}); } await _persist(); }
   Future<void> postCommunity(String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); posts.insert(0, CommunityPost(id: id, author: username, text: clean, createdAt: DateTime.now())); notifyListeners(); await mesh.broadcastPacket('post', {'id': id, 'text': clean}); await _persist(); }
-  Future<void> triggerSos() async { sosActive = true; final id = const Uuid().v4(); posts.insert(0, CommunityPost(id: id, author: username, text: 'SOS ACTIVE — emergency assistance requested.', createdAt: DateTime.now(), emergency: true)); notifyListeners(); await mesh.broadcastPacket('sos', {'id': id, 'text': 'Emergency assistance requested.'}); await _persist(); }
+  Future<void> triggerSos() async { sosActive = true; Position? position; try { var permission = await Geolocator.checkPermission(); if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission(); if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) position = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 8))); } on Object { position = null; } final id = const Uuid().v4(); final text = position == null ? 'SOS ACTIVE — emergency assistance requested.' : 'SOS ACTIVE — location ${position.latitude}, ${position.longitude}'; posts.insert(0, CommunityPost(id: id, author: username, text: text, createdAt: DateTime.now(), emergency: true, latitude: position?.latitude, longitude: position?.longitude)); notifyListeners(); await mesh.broadcastPacket('sos', {'id': id, 'text': 'Emergency assistance requested.', 'latitude': position?.latitude, 'longitude': position?.longitude}); await _persist(); }
   void stopSos() { sosActive = false; notifyListeners(); }
 
-  Future<void> createGroup(String name, String description) async { final g = MeshGroup(id: const Uuid().v4(), name: name.trim().isEmpty ? 'Mesh Group' : name.trim(), description: description.trim(), members: [deviceId]); groups.add(g); notifyListeners(); await mesh.broadcastPacket('group_announce', {'groupId': g.id, 'name': g.name, 'description': g.description}); await _persist(); }
+  Future<void> createGroup(String name, String description) async { final g = MeshGroup(id: const Uuid().v4(), name: name.trim().isEmpty ? 'Mesh Group' : name.trim(), description: description.trim(), members: [deviceId], ownerId: deviceId, adminIds: [deviceId]); groups.add(g); notifyListeners(); await _persist(); }
+  Future<void> addGroupMember(MeshGroup group, MeshPeer peer) async { if (!canManageGroup(group) || group.members.contains(peer.id)) return; group.members.add(peer.id); await _sendGroupState(group, 'group_invite', only: peer); await _sendGroupState(group, 'group_update'); await _persist(); notifyListeners(); }
+  Future<void> removeGroupMember(MeshGroup group, String memberId) async { if (!canManageGroup(group) || memberId == group.ownerId) return; final removedPeer = peers.where((p) => p.id == memberId && p.online).firstOrNull; group.members.remove(memberId); group.adminIds.remove(memberId); if (removedPeer != null) await _sendGroupState(group, 'group_update', only: removedPeer); await _sendGroupState(group, 'group_update'); await _persist(); notifyListeners(); }
+  Future<void> toggleGroupAdmin(MeshGroup group, String memberId) async { if (group.ownerId != deviceId || memberId == group.ownerId || !group.members.contains(memberId)) return; if (group.adminIds.contains(memberId)) group.adminIds.remove(memberId); else group.adminIds.add(memberId); await _sendGroupState(group, 'group_update'); await _persist(); notifyListeners(); }
+  bool canManageGroup(MeshGroup group) => group.ownerId == deviceId || group.adminIds.contains(deviceId);
+  Future<void> _sendGroupState(MeshGroup group, String type, {MeshPeer? only}) async { final payload = {'groupId': group.id, 'name': group.name, 'description': group.description, 'members': group.members, 'ownerId': group.ownerId, 'adminIds': group.adminIds, 'isPrivate': group.isPrivate}; final targets = only == null ? peers.where((p) => group.members.contains(p.id) && p.online && !p.blocked) : [only]; for (final peer in targets) { await mesh.sendToHost(peer.host, type, payload); } }
   Future<void> toggleFavorite(MeshPeer peer) async { peer.favorite = !peer.favorite; await _persist(); notifyListeners(); }
   Future<void> toggleBlocked(MeshPeer peer) async { peer.blocked = !peer.blocked; await _persist(); notifyListeners(); }
   Future<void> addCall(MeshPeer peer, bool video) async { calls.insert(0, CallRecord(id: const Uuid().v4(), peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); notifyListeners(); }
@@ -301,6 +325,7 @@ class AppState extends ChangeNotifier {
     final file = File('${directory.path}/${id}_${incoming.name}');
     await file.writeAsBytes(bytes, flush: true);
     if (!messages.any((message) => message.id == id)) messages.add(ChatMessage(id: id, peerId: peer.id, sender: packet.senderName, text: incoming.mime.startsWith('audio/') ? 'Voice note' : incoming.name, sentAt: DateTime.now(), mine: false, attachmentName: incoming.name, attachmentPath: file.path, attachmentMime: incoming.mime, attachmentSize: incoming.size));
+    unawaited(notifications.showMessage(packet.senderName, incoming.mime.startsWith('audio/') ? 'New voice note' : 'New file: ${incoming.name}'));
     if (host.isNotEmpty) await mesh.sendToHost(host, 'ack', {'id': id});
     await _persist(); notifyListeners();
   }
@@ -335,7 +360,7 @@ class AppState extends ChangeNotifier {
       _retryingPeers.remove(peer.id);
     }
   }
-  Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId])); await _persist(); notifyListeners(); }
+  Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false)); await _persist(); notifyListeners(); }
 
   @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); mesh.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
 }
@@ -362,4 +387,15 @@ String _mimeForName(String name) {
   if (lower.endsWith('.mp3')) return 'audio/mpeg';
   if (lower.endsWith('.pdf')) return 'application/pdf';
   return 'application/octet-stream';
+}
+
+MeshGroup? _groupFromPacket(MeshPacket packet) {
+  final payload = packet.payload;
+  final id = payload['groupId']?.toString() ?? '';
+  final owner = payload['ownerId']?.toString() ?? '';
+  final members = List<String>.from(payload['members'] is List ? payload['members'] as List : const <String>[]).toSet().take(100).toList();
+  final admins = List<String>.from(payload['adminIds'] is List ? payload['adminIds'] as List : const <String>[]).where(members.contains).toSet().toList();
+  if (id.isEmpty || owner.isEmpty || !members.contains(owner)) return null;
+  if (!admins.contains(owner)) admins.add(owner);
+  return MeshGroup(id: id, name: payload['name']?.toString() ?? 'Private group', description: payload['description']?.toString() ?? '', members: members, ownerId: owner, adminIds: admins, isPrivate: payload['isPrivate'] != false);
 }

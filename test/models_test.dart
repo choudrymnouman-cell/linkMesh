@@ -20,4 +20,17 @@ void main() {
     expect(restored.favorite, isTrue);
     expect(restored.blocked, isTrue);
   });
+
+  test('private group roles survive JSON round trip', () {
+    final restored = MeshGroup.fromJson(MeshGroup(id: 'g', name: 'Team', description: 'Private', members: ['owner', 'member'], ownerId: 'owner', adminIds: ['owner'], isPrivate: true).toJson());
+    expect(restored.ownerId, 'owner');
+    expect(restored.adminIds, ['owner']);
+    expect(restored.isPrivate, isTrue);
+  });
+
+  test('SOS location survives JSON round trip', () {
+    final restored = CommunityPost.fromJson(CommunityPost(id: 's', author: 'A', text: 'SOS', createdAt: DateTime(2026), emergency: true, latitude: 31.5204, longitude: 74.3587).toJson());
+    expect(restored.latitude, 31.5204);
+    expect(restored.longitude, 74.3587);
+  });
 }
