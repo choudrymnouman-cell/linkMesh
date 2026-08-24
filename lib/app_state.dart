@@ -107,12 +107,22 @@ class AppState extends ChangeNotifier {
     final id = packet.payload['id']?.toString() ?? '${DateTime.now().microsecondsSinceEpoch}';
     if (packet.type == 'message') {
       if (!messages.any((m) => m.id == id)) {
-        messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false));
+        messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, replyToId: packet.payload['replyToId']?.toString()));
       }
       // Always acknowledge retries; the message itself remains de-duplicated.
       if (host.isNotEmpty) unawaited(mesh.sendToHost(host, 'ack', {'id': id}));
     } else if (packet.type == 'ack') {
       _deliveryAcks.remove(id)?.complete();
+    } else if (packet.type == 'reaction') {
+      final target = messages.where((m) => m.id == id).firstOrNull;
+      final emoji = packet.payload['emoji']?.toString() ?? '';
+      if (target != null) {
+        if (emoji.isEmpty) {
+          target.reactions.remove(packet.senderId);
+        } else {
+          target.reactions[packet.senderId] = emoji;
+        }
+      }
     } else if (packet.type == 'group_message' && !messages.any((m) => m.id == id)) {
       final groupId = packet.payload['groupId']?.toString();
       if (groupId != null) messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, groupId: groupId));
@@ -126,14 +136,14 @@ class AppState extends ChangeNotifier {
     _persist(); notifyListeners();
   }
 
-  Future<bool> sendMessage(MeshPeer peer, String text) async {
+  Future<bool> sendMessage(MeshPeer peer, String text, {String? replyToId}) async {
     final clean = text.trim(); if (clean.isEmpty || peer.blocked) return false;
-    final id = const Uuid().v4(); final m = ChatMessage(id: id, peerId: peer.id, sender: username, text: clean, sentAt: DateTime.now(), mine: true, status: DeliveryStatus.pending); messages.add(m); notifyListeners();
+    final id = const Uuid().v4(); final m = ChatMessage(id: id, peerId: peer.id, sender: username, text: clean, sentAt: DateTime.now(), mine: true, status: DeliveryStatus.pending, replyToId: replyToId); messages.add(m); notifyListeners();
     final ack = Completer<void>();
     _deliveryAcks[id] = ack;
     var delivered = false;
     for (var attempt = 0; attempt < 3 && !delivered; attempt++) {
-      final sent = await mesh.sendToHost(peer.host, 'message', {'id': id, 'text': clean});
+      final sent = await mesh.sendToHost(peer.host, 'message', {'id': id, 'text': clean, 'replyToId': replyToId});
       if (!sent) continue;
       try {
         await ack.future.timeout(const Duration(seconds: 3));
@@ -156,6 +166,16 @@ class AppState extends ChangeNotifier {
   Future<void> toggleBlocked(MeshPeer peer) async { peer.blocked = !peer.blocked; await _persist(); notifyListeners(); }
   Future<void> addCall(MeshPeer peer, bool video) async { calls.insert(0, CallRecord(id: const Uuid().v4(), peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); notifyListeners(); }
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
+  Future<void> deleteMessage(ChatMessage message) async { messages.removeWhere((m) => m.id == message.id); await _persist(); notifyListeners(); }
+  Future<void> reactToMessage(MeshPeer peer, ChatMessage message, String emoji) async {
+    if (emoji.isEmpty) {
+      message.reactions.remove(deviceId);
+    } else {
+      message.reactions[deviceId] = emoji;
+    }
+    await mesh.sendToHost(peer.host, 'reaction', {'id': message.id, 'emoji': emoji});
+    await _persist(); notifyListeners();
+  }
   Future<bool> openSystemSettings() => openAppSettings();
   Future<bool> retryMessage(ChatMessage message) async {
     if (!message.mine || message.status != DeliveryStatus.failed) return false;
@@ -165,7 +185,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     final ack = Completer<void>();
     _deliveryAcks[message.id] = ack;
-    final sent = await mesh.sendToHost(peer.host, 'message', {'id': message.id, 'text': message.text});
+    final sent = await mesh.sendToHost(peer.host, 'message', {'id': message.id, 'text': message.text, 'replyToId': message.replyToId});
     var delivered = false;
     if (sent) {
       try { await ack.future.timeout(const Duration(seconds: 3)); delivered = true; } on TimeoutException { /* Keep failed status so the user can retry. */ }
