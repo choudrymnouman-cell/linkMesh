@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_state.dart';
 import '../models/models.dart';
@@ -297,6 +298,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final input = TextEditingController();
+  ChatMessage? replyingTo;
 
   @override
   void dispose() {
@@ -313,6 +315,7 @@ class _ChatScreenState extends State<ChatScreen> {
             appBar: AppBar(
               title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(widget.peer.name), Text(widget.peer.online ? 'Online' : 'Offline', style: const TextStyle(fontSize: 11))]),
               actions: [
+                IconButton(onPressed: () => _search(messages), icon: const Icon(Icons.search)),
                 IconButton(onPressed: () => _call(false), icon: const Icon(Icons.call)),
                 IconButton(onPressed: () => _call(true), icon: const Icon(Icons.videocam)),
               ],
@@ -322,9 +325,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: ListView(
                     padding: const EdgeInsets.all(12),
-                    children: messages.map((message) => _MessageBubble(message: message, retry: () => widget.state.retryMessage(message))).toList(),
+                    children: messages.map((message) {
+                      final reply = message.replyToId == null ? null : widget.state.messages.where((m) => m.id == message.replyToId).firstOrNull;
+                      return _MessageBubble(message: message, replyMessage: reply, retry: () => widget.state.retryMessage(message), onLongPress: () => _messageActions(message));
+                    }).toList(),
                   ),
                 ),
+                if (replyingTo != null) Material(color: Theme.of(context).colorScheme.surfaceContainerHighest, child: ListTile(dense: true, leading: const Icon(Icons.reply), title: Text('Replying to ${replyingTo!.sender}'), subtitle: Text(replyingTo!.text, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: IconButton(onPressed: () => setState(() => replyingTo = null), icon: const Icon(Icons.close)))),
                 _Composer(controller: input, hint: 'Message ${widget.peer.name}', send: _send),
               ],
             ),
@@ -335,7 +342,22 @@ class _ChatScreenState extends State<ChatScreen> {
   void _send() {
     final text = input.text;
     input.clear();
-    widget.state.sendMessage(widget.peer, text);
+    final replyId = replyingTo?.id;
+    setState(() => replyingTo = null);
+    widget.state.sendMessage(widget.peer, text, replyToId: replyId);
+  }
+
+  void _search(List<ChatMessage> messages) {
+    showSearch<ChatMessage?>(context: context, delegate: _MessageSearchDelegate(messages));
+  }
+
+  void _messageActions(ChatMessage message) {
+    showModalBottomSheet<void>(context: context, builder: (sheetContext) => SafeArea(child: Wrap(children: [
+      ListTile(leading: const Icon(Icons.reply), title: const Text('Reply'), onTap: () { Navigator.pop(sheetContext); setState(() => replyingTo = message); }),
+      ListTile(leading: const Icon(Icons.copy), title: const Text('Copy'), onTap: () { Clipboard.setData(ClipboardData(text: message.text)); Navigator.pop(sheetContext); }),
+      ListTile(leading: const Text('👍', style: TextStyle(fontSize: 24)), title: const Text('React'), onTap: () { widget.state.reactToMessage(widget.peer, message, '👍'); Navigator.pop(sheetContext); }),
+      ListTile(leading: const Icon(Icons.delete_outline, color: Colors.red), title: const Text('Delete from this phone'), onTap: () { widget.state.deleteMessage(message); Navigator.pop(sheetContext); }),
+    ])));
   }
 
   void _call(bool video) {
@@ -352,9 +374,11 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message, required this.retry});
+  const _MessageBubble({required this.message, required this.replyMessage, required this.retry, required this.onLongPress});
   final ChatMessage message;
+  final ChatMessage? replyMessage;
   final VoidCallback retry;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -376,9 +400,15 @@ class _MessageBubble extends StatelessWidget {
       child: Card(
         child: InkWell(
           onTap: message.mine && message.status == DeliveryStatus.failed ? retry : null,
+          onLongPress: onLongPress,
           child: Padding(
           padding: const EdgeInsets.all(10),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(message.text), if (statusIcon != null) Icon(statusIcon, size: 14, color: statusColor)]),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            if (replyMessage != null) Container(width: 220, padding: const EdgeInsets.all(7), margin: const EdgeInsets.only(bottom: 6), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(7)), child: Text('${replyMessage!.sender}: ${replyMessage!.text}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+            Text(message.text),
+            const SizedBox(height: 3),
+            Row(mainAxisSize: MainAxisSize.min, children: [if (message.reactions.isNotEmpty) Text(message.reactions.values.join(' ')), const SizedBox(width: 6), Text(_clock(message.sentAt), style: Theme.of(context).textTheme.labelSmall), if (statusIcon != null) ...[const SizedBox(width: 4), Icon(statusIcon, size: 14, color: statusColor)]]),
+          ]),
           ),
         ),
       ),
@@ -720,6 +750,24 @@ class _Empty extends StatelessWidget {
         ),
       );
 }
+
+class _MessageSearchDelegate extends SearchDelegate<ChatMessage?> {
+  _MessageSearchDelegate(this.messages);
+  final List<ChatMessage> messages;
+
+  @override List<Widget>? buildActions(BuildContext context) => [if (query.isNotEmpty) IconButton(onPressed: () => query = '', icon: const Icon(Icons.clear))];
+  @override Widget? buildLeading(BuildContext context) => IconButton(onPressed: () => close(context, null), icon: const Icon(Icons.arrow_back));
+  @override Widget buildSuggestions(BuildContext context) => _results();
+  @override Widget buildResults(BuildContext context) => _results();
+
+  Widget _results() {
+    final clean = query.trim().toLowerCase();
+    final found = clean.isEmpty ? messages.reversed.take(20) : messages.reversed.where((m) => m.text.toLowerCase().contains(clean) || m.sender.toLowerCase().contains(clean));
+    return ListView(children: found.map((m) => ListTile(leading: Icon(m.mine ? Icons.north_east : Icons.south_west), title: Text(m.text, maxLines: 2, overflow: TextOverflow.ellipsis), subtitle: Text('${m.sender} • ${_time(m.sentAt)}'))).toList());
+  }
+}
+
+String _clock(DateTime date) => '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
 
 String _time(DateTime? date) {
   if (date == null) return 'never';
