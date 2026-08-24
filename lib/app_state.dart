@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -7,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
 import 'services/local_store.dart';
+import 'services/secure_mesh_codec.dart';
 
 class AppState extends ChangeNotifier {
   final LocalMeshService mesh = LocalMeshService();
@@ -40,7 +44,7 @@ class AppState extends ChangeNotifier {
     meshCode = _prefs!.getString('meshCode') ?? '';
     onboarded = _prefs!.getBool('onboarded') ?? false;
     darkMode = _prefs!.getBool('darkMode') ?? false;
-    if (onboarded && !RegExp(r'^\d{6}$').hasMatch(meshCode)) onboarded = false;
+    if (onboarded && !validMeshSecret(meshCode)) onboarded = false;
     final migrated = _prefs!.getBool('sqliteMigrated') ?? false;
     await _loadList('peers', (j) => MeshPeer.fromJson(j), peers, migrated);
     await _loadList('messages', (j) => ChatMessage.fromJson(j), messages, migrated);
@@ -79,9 +83,14 @@ class AppState extends ChangeNotifier {
     await _store!.replaceCollection('calls', calls.take(100).map((e) => e.toJson()));
   }
 
-  Future<void> setProfile(String name, String code) async { username = name.trim().isEmpty ? 'Mesh User' : name.trim(); meshCode = code.trim(); if (!RegExp(r'^\d{6}$').hasMatch(meshCode)) return; onboarded = true; await _persist(); notifyListeners(); await startNetwork(); }
+  bool validMeshSecret(String value) => RegExp(r'^\d{6}$').hasMatch(value.trim()) || RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(value.trim());
+  String generateStrongMeshSecret() {
+    final random = Random.secure();
+    return List<int>.generate(32, (_) => random.nextInt(256)).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+  }
+  Future<void> setProfile(String name, String code) async { username = name.trim().isEmpty ? 'Mesh User' : name.trim(); meshCode = code.trim(); if (!validMeshSecret(meshCode)) return; onboarded = true; await _persist(); notifyListeners(); await startNetwork(); }
   Future<void> updateProfile(String name) async { username = name.trim().isEmpty ? username : name.trim(); await _persist(); notifyListeners(); if (networkRunning) { await restartNetwork(); } }
-  Future<void> updateMeshCode(String code) async { if (!RegExp(r'^\d{6}$').hasMatch(code.trim())) return; meshCode = code.trim(); await _persist(); notifyListeners(); await restartNetwork(); }
+  Future<void> updateMeshCode(String code) async { if (!validMeshSecret(code)) return; meshCode = code.trim(); await _persist(); notifyListeners(); await restartNetwork(); }
 
   Future<void> startNetwork() async {
     if (!onboarded || networkRunning) return;
@@ -95,7 +104,7 @@ class AppState extends ChangeNotifier {
         }
       }
       _sub ??= mesh.packets.listen(_onPacket);
-      if (!RegExp(r'^\d{6}$').hasMatch(meshCode)) throw StateError('A six-digit mesh code is required.');
+      if (!validMeshSecret(meshCode)) throw StateError('A valid private mesh key is required.');
       await mesh.start(id: deviceId, name: username, meshCode: meshCode);
       networkRunning = true;
       _peerSweep ??= Timer.periodic(const Duration(seconds: 5), (_) => _expirePeers());
@@ -180,6 +189,41 @@ class AppState extends ChangeNotifier {
   Future<void> toggleBlocked(MeshPeer peer) async { peer.blocked = !peer.blocked; await _persist(); notifyListeners(); }
   Future<void> addCall(MeshPeer peer, bool video) async { calls.insert(0, CallRecord(id: const Uuid().v4(), peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); notifyListeners(); }
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
+  Future<bool> exportEncryptedBackup() async {
+    final backup = <String, dynamic>{
+      'backupVersion': 1,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+      'settings': {'username': username, 'darkMode': darkMode},
+      'peers': peers.map((e) => e.toJson()).toList(),
+      'messages': messages.map((e) => e.toJson()).toList(),
+      'groups': groups.map((e) => e.toJson()).toList(),
+      'posts': posts.map((e) => e.toJson()).toList(),
+      'calls': calls.map((e) => e.toJson()).toList(),
+    };
+    final encrypted = await SecureMeshCodec(meshCode).encrypt(backup);
+    final path = await FilePicker.platform.saveFile(dialogTitle: 'Save encrypted LinkMesh backup', fileName: 'linkmesh-backup-${DateTime.now().millisecondsSinceEpoch}.lmb', bytes: Uint8List.fromList(utf8.encode(encrypted)));
+    return path != null;
+  }
+  Future<bool> restoreEncryptedBackup() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['lmb'], withData: true);
+    final bytes = result?.files.single.bytes;
+    if (bytes == null) return false;
+    final backup = await SecureMeshCodec(meshCode).decrypt(utf8.decode(bytes));
+    if (backup == null || backup['backupVersion'] != 1) return false;
+    await stopNetwork();
+    final settings = backup['settings'] is Map ? Map<String, dynamic>.from(backup['settings'] as Map) : const <String, dynamic>{};
+    username = settings['username']?.toString() ?? username;
+    darkMode = settings['darkMode'] == true;
+    peers..clear()..addAll((backup['peers'] as List? ?? const []).map((e) => MeshPeer.fromJson(Map<String, dynamic>.from(e as Map))));
+    messages..clear()..addAll((backup['messages'] as List? ?? const []).map((e) => ChatMessage.fromJson(Map<String, dynamic>.from(e as Map))));
+    groups..clear()..addAll((backup['groups'] as List? ?? const []).map((e) => MeshGroup.fromJson(Map<String, dynamic>.from(e as Map))));
+    posts..clear()..addAll((backup['posts'] as List? ?? const []).map((e) => CommunityPost.fromJson(Map<String, dynamic>.from(e as Map))));
+    calls..clear()..addAll((backup['calls'] as List? ?? const []).map((e) => CallRecord.fromJson(Map<String, dynamic>.from(e as Map))));
+    await _persist();
+    notifyListeners();
+    await startNetwork();
+    return true;
+  }
   Future<void> deleteMessage(ChatMessage message) async { messages.removeWhere((m) => m.id == message.id); await _persist(); notifyListeners(); }
   Future<void> reactToMessage(MeshPeer peer, ChatMessage message, String emoji) async {
     if (emoji.isEmpty) {
