@@ -147,7 +147,12 @@ class DashboardScreen extends StatelessWidget {
         if (state.networkError != null)
           Card(
             color: Theme.of(context).colorScheme.errorContainer,
-            child: ListTile(leading: const Icon(Icons.error_outline), title: const Text('Mesh could not start'), subtitle: Text(state.networkError!)),
+            child: ListTile(
+              leading: const Icon(Icons.error_outline),
+              title: const Text('Mesh could not start'),
+              subtitle: Text(state.networkError!),
+              trailing: TextButton(onPressed: state.openSystemSettings, child: const Text('Settings')),
+            ),
           ),
         const SizedBox(height: 12),
         Wrap(
@@ -307,7 +312,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: ListView(
                     padding: const EdgeInsets.all(12),
-                    children: messages.map((message) => _MessageBubble(message: message)).toList(),
+                    children: messages.map((message) => _MessageBubble(message: message, retry: () => widget.state.retryMessage(message))).toList(),
                   ),
                 ),
                 _Composer(controller: input, hint: 'Message ${widget.peer.name}', send: _send),
@@ -337,8 +342,9 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message});
+  const _MessageBubble({required this.message, required this.retry});
   final ChatMessage message;
+  final VoidCallback retry;
 
   @override
   Widget build(BuildContext context) {
@@ -358,9 +364,12 @@ class _MessageBubble extends StatelessWidget {
     return Align(
       alignment: message.mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Card(
-        child: Padding(
+        child: InkWell(
+          onTap: message.mine && message.status == DeliveryStatus.failed ? retry : null,
+          child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(message.text), if (statusIcon != null) Icon(statusIcon, size: 14, color: statusColor)]),
+          ),
         ),
       ),
     );

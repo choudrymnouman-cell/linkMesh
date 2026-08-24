@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
 
@@ -19,6 +20,7 @@ class AppState extends ChangeNotifier {
   bool networkRunning = false;
   bool initialized = false;
   String? networkError;
+  final Map<String, Completer<void>> _deliveryAcks = {};
   final List<MeshPeer> peers = [];
   final List<ChatMessage> messages = [];
   final List<MeshGroup> groups = [];
@@ -52,6 +54,7 @@ class AppState extends ChangeNotifier {
     final p = _prefs; if (p == null) return;
     await p.setString('username', username); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode);
     await p.setString('peers', jsonEncode(peers.map((e) => e.toJson()).toList()));
+    if (messages.length > 2000) messages.removeRange(0, messages.length - 2000);
     await p.setString('messages', jsonEncode(messages.map((e) => e.toJson()).toList()));
     await p.setString('groups', jsonEncode(groups.map((e) => e.toJson()).toList()));
     await p.setString('posts', jsonEncode(posts.take(200).map((e) => e.toJson()).toList()));
@@ -65,6 +68,13 @@ class AppState extends ChangeNotifier {
     if (!onboarded || networkRunning) return;
     networkError = null;
     try {
+      final nearby = await Permission.nearbyWifiDevices.request();
+      if (!nearby.isGranted && !nearby.isLimited) {
+        final location = await Permission.locationWhenInUse.request();
+        if (!location.isGranted && !location.isLimited) {
+          throw StateError('Nearby-device permission is required for local discovery. Enable it in Android Settings.');
+        }
+      }
       _sub ??= mesh.packets.listen(_onPacket);
       await mesh.start(id: deviceId, name: username);
       networkRunning = true;
@@ -88,8 +98,14 @@ class AppState extends ChangeNotifier {
     else { peer.name = packet.senderName; if (host.isNotEmpty) peer.host = host; peer.online = true; peer.lastSeen = DateTime.now(); }
     if (peer.blocked) { _persist(); notifyListeners(); return; }
     final id = packet.payload['id']?.toString() ?? '${DateTime.now().microsecondsSinceEpoch}';
-    if (packet.type == 'message' && !messages.any((m) => m.id == id)) {
-      messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false));
+    if (packet.type == 'message') {
+      if (!messages.any((m) => m.id == id)) {
+        messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false));
+      }
+      // Always acknowledge retries; the message itself remains de-duplicated.
+      if (host.isNotEmpty) unawaited(mesh.sendToHost(host, 'ack', {'id': id}));
+    } else if (packet.type == 'ack') {
+      _deliveryAcks.remove(id)?.complete();
     } else if (packet.type == 'group_message' && !messages.any((m) => m.id == id)) {
       final groupId = packet.payload['groupId']?.toString();
       if (groupId != null) messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, groupId: groupId));
@@ -106,7 +122,22 @@ class AppState extends ChangeNotifier {
   Future<bool> sendMessage(MeshPeer peer, String text) async {
     final clean = text.trim(); if (clean.isEmpty || peer.blocked) return false;
     final id = const Uuid().v4(); final m = ChatMessage(id: id, peerId: peer.id, sender: username, text: clean, sentAt: DateTime.now(), mine: true, status: DeliveryStatus.pending); messages.add(m); notifyListeners();
-    final ok = await mesh.sendToHost(peer.host, 'message', {'id': id, 'text': clean}); m.status = ok ? DeliveryStatus.delivered : DeliveryStatus.failed; await _persist(); notifyListeners(); return ok;
+    final ack = Completer<void>();
+    _deliveryAcks[id] = ack;
+    var delivered = false;
+    for (var attempt = 0; attempt < 3 && !delivered; attempt++) {
+      final sent = await mesh.sendToHost(peer.host, 'message', {'id': id, 'text': clean});
+      if (!sent) continue;
+      try {
+        await ack.future.timeout(const Duration(seconds: 3));
+        delivered = true;
+      } on TimeoutException {
+        // Retry: the receiver de-duplicates by message ID.
+      }
+    }
+    _deliveryAcks.remove(id);
+    m.status = delivered ? DeliveryStatus.delivered : DeliveryStatus.failed;
+    await _persist(); notifyListeners(); return delivered;
   }
   Future<void> sendGroupMessage(MeshGroup group, String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); messages.add(ChatMessage(id: id, peerId: deviceId, sender: username, text: clean, sentAt: DateTime.now(), mine: true, groupId: group.id)); notifyListeners(); await mesh.broadcastPacket('group_message', {'id': id, 'groupId': group.id, 'text': clean}); await _persist(); }
   Future<void> postCommunity(String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); posts.insert(0, CommunityPost(id: id, author: username, text: clean, createdAt: DateTime.now())); notifyListeners(); await mesh.broadcastPacket('post', {'id': id, 'text': clean}); await _persist(); }
@@ -118,9 +149,28 @@ class AppState extends ChangeNotifier {
   Future<void> toggleBlocked(MeshPeer peer) async { peer.blocked = !peer.blocked; await _persist(); notifyListeners(); }
   Future<void> addCall(MeshPeer peer, bool video) async { calls.insert(0, CallRecord(id: const Uuid().v4(), peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); notifyListeners(); }
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
+  Future<bool> openSystemSettings() => openAppSettings();
+  Future<bool> retryMessage(ChatMessage message) async {
+    if (!message.mine || message.status != DeliveryStatus.failed) return false;
+    final peer = peers.where((p) => p.id == message.peerId).firstOrNull;
+    if (peer == null || peer.blocked) return false;
+    message.status = DeliveryStatus.pending;
+    notifyListeners();
+    final ack = Completer<void>();
+    _deliveryAcks[message.id] = ack;
+    final sent = await mesh.sendToHost(peer.host, 'message', {'id': message.id, 'text': message.text});
+    var delivered = false;
+    if (sent) {
+      try { await ack.future.timeout(const Duration(seconds: 3)); delivered = true; } on TimeoutException { /* Keep failed status so the user can retry. */ }
+    }
+    _deliveryAcks.remove(message.id);
+    message.status = delivered ? DeliveryStatus.delivered : DeliveryStatus.failed;
+    await _persist(); notifyListeners();
+    return delivered;
+  }
   Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId])); await _persist(); notifyListeners(); }
 
-  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); mesh.dispose(); super.dispose(); }
+  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); mesh.dispose(); super.dispose(); }
 }
 
 extension FirstOrNullState<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }
