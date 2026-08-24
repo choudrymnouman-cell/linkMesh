@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:linkmesh_offline_chat/models/models.dart';
+import 'package:linkmesh_offline_chat/services/local_mesh_service.dart';
 
 void main() {
   test('chat message survives JSON round trip', () {
@@ -32,5 +33,13 @@ void main() {
     final restored = CommunityPost.fromJson(CommunityPost(id: 's', author: 'A', text: 'SOS', createdAt: DateTime(2026), emergency: true, latitude: 31.5204, longitude: 74.3587).toJson());
     expect(restored.latitude, 31.5204);
     expect(restored.longitude, 74.3587);
+  });
+
+  test('multi-hop routing envelope survives JSON round trip', () {
+    final restored = MeshPacket.fromJson(MeshPacket(type: 'message', senderId: 'a', senderName: 'Alice', payload: const {'text': 'hello'}, routeId: 'route-1', targetId: 'c', hopsRemaining: 3, relayPath: ['a', 'b']).toJson());
+    expect(restored.routeId, 'route-1');
+    expect(restored.targetId, 'c');
+    expect(restored.hopsRemaining, 3);
+    expect(restored.relayPath, ['a', 'b']);
   });
 }

@@ -13,6 +13,6 @@ class _LinkMeshBootstrapState extends State<LinkMeshBootstrap> {
     debugShowCheckedModeBanner: false, title: 'LinkMesh', themeMode: state.darkMode ? ThemeMode.dark : ThemeMode.light,
     theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B64F6)), useMaterial3: true, scaffoldBackgroundColor: const Color(0xFFF6F8FC)),
     darkTheme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF76A0FF), brightness: Brightness.dark), useMaterial3: true),
-    home: !state.initialized ? const Scaffold(body: Center(child: CircularProgressIndicator())) : state.onboarded ? MainShell(state: state) : OnboardingScreen(state: state),
+    home: !state.initialized ? const Scaffold(body: Center(child: CircularProgressIndicator())) : state.onboarded ? state.callService.active ? CallScreen(state: state) : MainShell(state: state) : OnboardingScreen(state: state),
   ));
 }

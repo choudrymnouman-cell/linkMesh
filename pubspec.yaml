@@ -1,7 +1,7 @@
 name: linkmesh_offline_chat
 description: Flutter recreation of the supplied offline mesh chatting APK.
 publish_to: 'none'
-version: 2.5.0+8
+version: 3.0.0+9
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -25,6 +25,7 @@ dependencies:
   open_filex: ^4.6.0
   geolocator: ^13.0.2
   flutter_local_notifications: ^18.0.1
+  flutter_webrtc: ^1.6.0
 
 dev_dependencies:
   flutter_test:
