@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app_state.dart';
 import '../models/models.dart';
@@ -59,14 +61,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               else ...[
                 TextField(controller: controller, decoration: const InputDecoration(labelText: 'Display name', border: OutlineInputBorder())),
                 const SizedBox(height: 12),
-                TextField(controller: codeController, keyboardType: TextInputType.number, maxLength: 6, obscureText: true, decoration: const InputDecoration(labelText: '6-digit private mesh code', helperText: 'Use the same code on trusted phones', border: OutlineInputBorder())),
+                TextField(controller: codeController, obscureText: true, decoration: const InputDecoration(labelText: 'Private mesh key', helperText: 'Enter six digits or generate a stronger key', border: OutlineInputBorder())),
+                TextButton.icon(onPressed: () { codeController.text = widget.state.generateStrongMeshSecret(); setState(() {}); }, icon: const Icon(Icons.auto_awesome), label: const Text('Generate stronger private key')),
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
                     onPressed: () {
-                      if (!RegExp(r'^\d{6}$').hasMatch(codeController.text.trim())) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid 6-digit mesh code.')));
+                      if (!widget.state.validMeshSecret(codeController.text)) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter six digits or generate a strong private key.')));
                         return;
                       }
                       widget.state.setProfile(controller.text, codeController.text);
@@ -620,6 +623,9 @@ class SettingsScreen extends StatelessWidget {
             ),
             SwitchListTile(value: state.darkMode, onChanged: state.toggleTheme, secondary: const Icon(Icons.dark_mode), title: const Text('Dark mode')),
             ListTile(leading: const Icon(Icons.lock), title: const Text('Private mesh code'), subtitle: const Text('AES-256 encrypted trusted network'), trailing: const Icon(Icons.edit), onTap: () => _editMeshCode(context)),
+            ListTile(leading: const Icon(Icons.qr_code_2), title: const Text('QR secure pairing'), subtitle: const Text('Connect a trusted phone without typing the key'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state)))),
+            ListTile(leading: const Icon(Icons.backup), title: const Text('Create encrypted backup'), subtitle: const Text('Protected by the current private mesh key'), onTap: () => _backup(context)),
+            ListTile(leading: const Icon(Icons.restore), title: const Text('Restore encrypted backup'), subtitle: const Text('Requires the same private mesh key'), onTap: () => _restore(context)),
             SwitchListTile(
               value: state.networkRunning,
               onChanged: (value) => value ? state.startNetwork() : state.stopNetwork(),
@@ -669,6 +675,57 @@ class SettingsScreen extends StatelessWidget {
       ),
     ).whenComplete(controller.dispose);
   }
+
+  Future<void> _backup(BuildContext context) async {
+    final ok = await state.exportEncryptedBackup();
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Encrypted backup saved.' : 'Backup cancelled.')));
+  }
+
+  Future<void> _restore(BuildContext context) async {
+    final ok = await state.restoreEncryptedBackup();
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Backup restored successfully.' : 'Restore failed or was cancelled.')));
+  }
+}
+
+class QrPairingScreen extends StatelessWidget {
+  const QrPairingScreen({super.key, required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final payload = 'linkmesh:v2:${state.meshCode}';
+    return Scaffold(
+      appBar: AppBar(title: const Text('Secure QR pairing')),
+      body: ListView(padding: const EdgeInsets.all(24), children: [
+        const Text('Show this QR code only to a trusted person. It contains the private key for your encrypted local network.', textAlign: TextAlign.center),
+        const SizedBox(height: 20),
+        Center(child: ColoredBox(color: Colors.white, child: Padding(padding: const EdgeInsets.all(12), child: QrImageView(data: payload, size: 240)))),
+        const SizedBox(height: 20),
+        FilledButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerScreen(state: state))), icon: const Icon(Icons.qr_code_scanner), label: const Text('Scan another LinkMesh QR')),
+        OutlinedButton.icon(onPressed: () async { await state.updateMeshCode(state.generateStrongMeshSecret()); if (context.mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state))); }, icon: const Icon(Icons.refresh), label: const Text('Generate a new secure network key')),
+      ]),
+    );
+  }
+}
+
+class QrScannerScreen extends StatefulWidget {
+  const QrScannerScreen({super.key, required this.state});
+  final AppState state;
+  @override State<QrScannerScreen> createState() => _QrScannerScreenState();
+}
+
+class _QrScannerScreenState extends State<QrScannerScreen> {
+  bool handled = false;
+  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('Scan trusted device')), body: MobileScanner(onDetect: (capture) async {
+    if (handled || capture.barcodes.isEmpty) return;
+    final raw = capture.barcodes.first.rawValue ?? '';
+    if (!raw.startsWith('linkmesh:v2:')) return;
+    final secret = raw.substring('linkmesh:v2:'.length);
+    if (!widget.state.validMeshSecret(secret)) return;
+    handled = true;
+    await widget.state.updateMeshCode(secret);
+    if (context.mounted) Navigator.pop(context);
+  }));
 }
 
 class CallHistoryScreen extends StatelessWidget {
