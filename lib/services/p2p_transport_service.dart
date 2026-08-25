@@ -25,6 +25,7 @@ class P2pTransportService extends ChangeNotifier {
 
   Future<bool> prepare() async {
     if (!Platform.isAndroid) return false;
+    if (!initialized) await initialize().timeout(const Duration(seconds: 5));
     if (!await host.checkP2pPermissions()) await host.askP2pPermissions();
     if (!await host.checkBluetoothPermissions()) await host.askBluetoothPermissions();
     if (!await host.checkWifiEnabled()) await host.enableWifiServices();

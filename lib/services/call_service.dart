@@ -21,12 +21,15 @@ class CallService extends ChangeNotifier {
   bool muted = false;
   bool cameraEnabled = true;
   Map<String, dynamic>? _pendingOffer;
+  bool _initialized = false;
 
   bool get active => callId != null;
 
   Future<void> initialize() async {
+    if (_initialized) return;
     await localRenderer.initialize();
     await remoteRenderer.initialize();
+    _initialized = true;
   }
 
   Future<void> start({required String targetId, required String targetName, required bool withVideo, required String id}) async {
