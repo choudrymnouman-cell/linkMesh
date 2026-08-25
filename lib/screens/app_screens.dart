@@ -8,6 +8,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../app_state.dart';
 import '../models/models.dart';
@@ -50,7 +51,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           child: Column(
             children: [
               const Spacer(),
-              Icon(item.$3, size: 88, color: _blue),
+              if (page == 0)
+                ClipRRect(borderRadius: BorderRadius.circular(28), child: Image.asset('assets/images/linkmesh_icon.png', width: 108, height: 108))
+              else
+                Icon(item.$3, size: 88, color: _blue),
               const SizedBox(height: 24),
               Text(item.$1, textAlign: TextAlign.center, style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
               const SizedBox(height: 12),
@@ -110,9 +114,9 @@ class _MainShellState extends State<MainShell> {
       NearbyScreen(state: widget.state),
       ChatsScreen(state: widget.state),
       GroupsScreen(state: widget.state),
-      SettingsScreen(state: widget.state),
+      FilesScreen(state: widget.state),
     ];
-    const titles = ['LinkMesh', 'Nearby', 'Chats', 'Groups', 'Settings'];
+    const titles = ['Dashboard', 'People Nearby', 'Chats', 'Groups', 'Files'];
     return Scaffold(
       appBar: AppBar(
         title: Text(titles[index]),
@@ -122,6 +126,7 @@ class _MainShellState extends State<MainShell> {
             onPressed: widget.state.restartNetwork,
             icon: Icon(widget.state.networkRunning ? Icons.wifi : Icons.wifi_off, color: widget.state.networkRunning ? Colors.green : null),
           ),
+          IconButton(tooltip: 'Settings', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsScreen(state: widget.state))), icon: const Icon(Icons.settings_outlined)),
         ],
       ),
       body: IndexedStack(index: index, children: screens),
@@ -129,11 +134,11 @@ class _MainShellState extends State<MainShell> {
         selectedIndex: index,
         onDestinationSelected: (value) => setState(() => index = value),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.dashboard_rounded), label: 'Home'),
           NavigationDestination(icon: Icon(Icons.radar), label: 'Nearby'),
           NavigationDestination(icon: Icon(Icons.chat), label: 'Chats'),
           NavigationDestination(icon: Icon(Icons.groups), label: 'Groups'),
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
+          NavigationDestination(icon: Icon(Icons.folder_rounded), label: 'Files'),
         ],
       ),
     );
@@ -153,16 +158,17 @@ class DashboardScreen extends StatelessWidget {
       children: [
         Container(
           padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(color: _blue, borderRadius: BorderRadius.circular(24)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('LOCAL OFFLINE NETWORK', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Text('Hello, ${state.username}', style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
-              Text('$online nearby • ${state.messages.length} saved messages', style: const TextStyle(color: Colors.white70)),
-            ],
-          ),
+          decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF154BC6), Color(0xFF2B64F6), Color(0xFF25A9E8)]), borderRadius: BorderRadius.circular(24)),
+          child: Row(children: [
+            ClipRRect(borderRadius: BorderRadius.circular(18), child: Image.asset('assets/images/linkmesh_icon.png', width: 68, height: 68)),
+            const SizedBox(width: 16),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('MESH NETWORK', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Text(state.networkRunning ? 'Connected' : 'Paused', style: const TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.bold)),
+              Text('$online devices online • ${state.messages.length} messages', style: const TextStyle(color: Colors.white70)),
+            ])),
+          ]),
         ),
         if (state.networkError != null)
           Card(
@@ -175,16 +181,22 @@ class DashboardScreen extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
+        const Text('Quick actions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        GridView.count(
+          crossAxisCount: 3,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          childAspectRatio: 1.05,
           children: [
-            _Action(Icons.radar, 'Discover', () => navigate(1)),
-            _Action(Icons.chat, 'Chats', () => navigate(2)),
-            _Action(Icons.groups, 'Groups', () => navigate(3)),
-            _Action(Icons.sos, 'SOS', () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: state)))),
-            _Action(Icons.campaign, 'Community', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state)))),
-            _Action(Icons.monitor_heart, 'Diagnostics', () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
+            _Action(Icons.chat_bubble_rounded, 'Chats', () => navigate(2)),
+            _Action(Icons.call_rounded, 'Calls', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
+            _Action(Icons.people_alt_rounded, 'People', () => navigate(1)),
+            _Action(Icons.folder_rounded, 'Files', () => navigate(4)),
+            _Action(Icons.groups_rounded, 'Groups', () => navigate(3)),
+            _Action(Icons.sos_rounded, 'SOS', () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: state)))),
           ],
         ),
         const SizedBox(height: 18),
@@ -211,13 +223,14 @@ class _Action extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-        width: (MediaQuery.sizeOf(context).width - 44) / 2,
         child: Card(
+          margin: EdgeInsets.zero,
           child: InkWell(
             onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
             child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(children: [Icon(icon, color: _blue, size: 32), const SizedBox(height: 7), Text(title, style: const TextStyle(fontWeight: FontWeight.bold))]),
+              padding: const EdgeInsets.all(12),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: _blue, size: 28), const SizedBox(height: 7), Text(title, style: const TextStyle(fontWeight: FontWeight.bold))]),
             ),
           ),
         ),
@@ -236,7 +249,7 @@ class NearbyScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              FilledButton.icon(onPressed: state.restartNetwork, icon: const Icon(Icons.refresh), label: const Text('Refresh discovery')),
+              Card(child: ListTile(leading: const CircleAvatar(backgroundColor: Color(0xFFE7EFFF), child: Icon(Icons.radar, color: _blue)), title: Text('${peers.where((peer) => peer.online).length} devices found'), subtitle: const Text('Nearby phones appear automatically while LinkMesh is open'))),
               if (peers.isEmpty) const _Empty('No nearby nodes', 'Put two phones on the same Wi-Fi/hotspot and open LinkMesh.'),
               ...peers.map(
                 (peer) => Card(
@@ -258,6 +271,8 @@ class NearbyScreen extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
+              FilledButton.icon(onPressed: state.restartNetwork, icon: const Icon(Icons.refresh), label: const Text('REFRESH NEARBY DEVICES')),
             ],
           );
         },
@@ -308,13 +323,28 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final input = TextEditingController();
   final recorder = AudioRecorder();
+  final audioPlayer = AudioPlayer();
+  StreamSubscription<PlayerState>? audioSubscription;
   ChatMessage? replyingTo;
+  String? activeVoiceNoteId;
   bool recording = false;
+
+  @override
+  void initState() {
+    super.initState();
+    audioSubscription = audioPlayer.playerStateStream.listen((playerState) {
+      if (playerState.processingState == ProcessingState.completed && mounted) {
+        setState(() => activeVoiceNoteId = null);
+      }
+    });
+  }
 
   @override
   void dispose() {
     input.dispose();
     unawaited(recorder.dispose());
+    unawaited(audioSubscription?.cancel());
+    unawaited(audioPlayer.dispose());
     super.dispose();
   }
 
@@ -339,12 +369,20 @@ class _ChatScreenState extends State<ChatScreen> {
                     padding: const EdgeInsets.all(12),
                     children: messages.map((message) {
                       final reply = message.replyToId == null ? null : widget.state.messages.where((m) => m.id == message.replyToId).firstOrNull;
-                      return _MessageBubble(message: message, replyMessage: reply, retry: () => widget.state.retryMessage(message), onLongPress: () => _messageActions(message));
+                      return _MessageBubble(
+                        message: message,
+                        replyMessage: reply,
+                        retry: () => widget.state.retryMessage(message),
+                        onLongPress: () => _messageActions(message),
+                        audioPlayer: audioPlayer,
+                        voiceNoteActive: activeVoiceNoteId == message.id,
+                        playVoiceNote: () => _playVoiceNote(message),
+                      );
                     }).toList(),
                   ),
                 ),
                 if (replyingTo != null) Material(color: Theme.of(context).colorScheme.surfaceContainerHighest, child: ListTile(dense: true, leading: const Icon(Icons.reply), title: Text('Replying to ${replyingTo!.sender}'), subtitle: Text(replyingTo!.text, maxLines: 1, overflow: TextOverflow.ellipsis), trailing: IconButton(onPressed: () => setState(() => replyingTo = null), icon: const Icon(Icons.close)))),
-                _Composer(controller: input, hint: 'Message ${widget.peer.name}', send: _send, attach: () => widget.state.pickAndSendAttachment(widget.peer), voice: _toggleVoice, recording: recording),
+                _Composer(controller: input, hint: recording ? 'Recording voice note… tap stop to send' : 'Message ${widget.peer.name}', send: _send, attach: () => widget.state.pickAndSendAttachment(widget.peer), voice: _toggleVoice, recording: recording),
               ],
             ),
           );
@@ -374,22 +412,58 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _toggleVoice() async {
     if (recording) {
-      final path = await recorder.stop();
-      if (mounted) setState(() => recording = false);
-      if (path != null) {
-        final file = File(path);
-        if (await file.exists()) await widget.state.sendAttachment(widget.peer, name: path.split(Platform.pathSeparator).last, bytes: await file.readAsBytes(), localPath: path, mime: 'audio/mp4');
+      try {
+        final path = await recorder.stop();
+        if (mounted) setState(() => recording = false);
+        if (path != null) {
+          final file = File(path);
+          if (await file.exists()) {
+            final sent = await widget.state.sendAttachment(widget.peer, name: path.split(Platform.pathSeparator).last, bytes: await file.readAsBytes(), localPath: path, mime: 'audio/mp4');
+            if (!sent && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Voice note could not be delivered. Keep it under 5 MB and check that the peer is online.')));
+          }
+        }
+      } catch (_) {
+        if (mounted) { setState(() => recording = false); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Voice recording could not be completed.'))); }
       }
       return;
     }
-    if (!await recorder.hasPermission()) return;
-    final directory = await getTemporaryDirectory();
-    final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
-    if (mounted) setState(() => recording = true);
+    if (!await recorder.hasPermission()) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Allow microphone access to record a voice note.'))); return; }
+    try {
+      final directory = await getTemporaryDirectory();
+      final path = '${directory.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+      if (mounted) setState(() => recording = true);
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Voice recording is unavailable on this device.')));
+    }
   }
 
-  void _call(bool video) { widget.state.startCall(widget.peer, video); }
+  Future<void> _playVoiceNote(ChatMessage message) async {
+    final path = message.attachmentPath;
+    if (path == null) return;
+    if (activeVoiceNoteId == message.id) {
+      if (audioPlayer.playing) {
+        await audioPlayer.pause();
+      } else {
+        await audioPlayer.play();
+      }
+      if (mounted) setState(() {});
+      return;
+    }
+    try {
+      await audioPlayer.stop();
+      await audioPlayer.setFilePath(path);
+      if (mounted) setState(() => activeVoiceNoteId = message.id);
+      await audioPlayer.play();
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('This voice note could not be played.')));
+    }
+  }
+
+  Future<void> _call(bool video) async {
+    final started = await widget.state.startCall(widget.peer, video);
+    if (!started && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.state.callError ?? 'Could not start the call. Check permissions and try again.')));
+  }
 }
 
 class CallScreen extends StatelessWidget {
@@ -399,6 +473,7 @@ class CallScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final call = state.callService;
+    final status = call.error ?? (call.incoming ? 'Incoming ${call.video ? 'video' : 'audio'} call' : call.connected ? 'Secure local call' : 'Connecting over LinkMesh…');
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -407,23 +482,86 @@ class CallScreen extends StatelessWidget {
           if (call.video && !call.incoming)
             Positioned.fill(child: RTCVideoView(call.remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
           else
-            Center(child: Column(mainAxisSize: MainAxisSize.min, children: [const CircleAvatar(radius: 56, child: Icon(Icons.person, size: 64)), const SizedBox(height: 24), Text(call.peerName ?? 'Nearby peer', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)), const SizedBox(height: 8), Text(call.incoming ? 'Incoming ${call.video ? 'video' : 'voice'} call' : call.connected ? 'Connected' : 'Connecting over LinkMesh…', style: const TextStyle(color: Colors.white70))])),
+            Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              CircleAvatar(radius: 56, backgroundColor: _blue, child: Text(_initial(call.peerName), style: const TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.bold))),
+              const SizedBox(height: 24),
+              Text(call.peerName ?? 'Nearby peer', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(status, style: TextStyle(color: call.error == null ? Colors.white70 : Colors.redAccent)),
+              if (call.connected) StreamBuilder<int>(stream: Stream.periodic(const Duration(seconds: 1), (value) => value), builder: (_, __) => Padding(padding: const EdgeInsets.only(top: 8), child: Text(_duration(DateTime.now().difference(call.connectedAt ?? DateTime.now())), style: const TextStyle(color: Colors.white, fontSize: 18)))),
+            ])),
           if (call.video && !call.incoming) Positioned(top: 18, right: 18, width: 110, height: 160, child: ClipRRect(borderRadius: BorderRadius.circular(16), child: RTCVideoView(call.localRenderer, mirror: true, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))),
           Positioned(left: 20, right: 20, bottom: 32, child: call.incoming
               ? Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [FloatingActionButton(backgroundColor: Colors.red, heroTag: 'reject', onPressed: call.reject, child: const Icon(Icons.call_end)), FloatingActionButton(backgroundColor: Colors.green, heroTag: 'accept', onPressed: state.acceptCall, child: const Icon(Icons.call))])
-              : Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [FloatingActionButton(heroTag: 'mute', onPressed: call.toggleMute, child: Icon(call.muted ? Icons.mic_off : Icons.mic)), if (call.video) FloatingActionButton(heroTag: 'camera', onPressed: call.toggleCamera, child: Icon(call.cameraEnabled ? Icons.videocam : Icons.videocam_off)), if (call.video) FloatingActionButton(heroTag: 'switch', onPressed: call.switchCamera, child: const Icon(Icons.cameraswitch)), FloatingActionButton(backgroundColor: Colors.red, heroTag: 'hangup', onPressed: call.end, child: const Icon(Icons.call_end))])),
+              : Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                  FloatingActionButton(heroTag: 'mute', onPressed: call.toggleMute, child: Icon(call.muted ? Icons.mic_off : Icons.mic)),
+                  if (call.video)
+                    FloatingActionButton(heroTag: 'camera', onPressed: call.toggleCamera, child: Icon(call.cameraEnabled ? Icons.videocam : Icons.videocam_off))
+                  else
+                    FloatingActionButton(heroTag: 'speaker', onPressed: call.toggleSpeaker, child: Icon(call.speakerOn ? Icons.volume_up : Icons.hearing)),
+                  if (call.video)
+                    FloatingActionButton(heroTag: 'switch', onPressed: call.switchCamera, child: const Icon(Icons.cameraswitch))
+                  else
+                    FloatingActionButton(heroTag: 'message', onPressed: () => _showInCallChat(context), child: const Icon(Icons.chat_bubble)),
+                  FloatingActionButton(backgroundColor: Colors.red, foregroundColor: Colors.white, heroTag: 'hangup', onPressed: call.end, child: const Icon(Icons.call_end)),
+                ])),
         ])),
       ),
     );
   }
+
+  void _showInCallChat(BuildContext context) {
+    final peerId = state.callService.peerId;
+    if (peerId == null) return;
+    final peer = state.peers.where((value) => value.id == peerId).firstOrNull;
+    if (peer == null) return;
+    showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => _InCallChatSheet(state: state, peer: peer));
+  }
+}
+
+class _InCallChatSheet extends StatefulWidget {
+  const _InCallChatSheet({required this.state, required this.peer});
+  final AppState state;
+  final MeshPeer peer;
+  @override State<_InCallChatSheet> createState() => _InCallChatSheetState();
+}
+
+class _InCallChatSheetState extends State<_InCallChatSheet> {
+  final input = TextEditingController();
+  @override void dispose() { input.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: widget.state,
+        builder: (_, __) {
+          final messages = widget.state.messages.where((message) => message.peerId == widget.peer.id && message.groupId == null).toList();
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+              child: SizedBox(
+                height: MediaQuery.sizeOf(context).height * .68,
+                child: Column(children: [
+                  ListTile(leading: const Icon(Icons.lock, color: _blue), title: Text('Chat with ${widget.peer.name}'), subtitle: const Text('The call continues while you message'), trailing: IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close))),
+                  const Divider(height: 1),
+                  Expanded(child: messages.isEmpty ? const _Empty('No messages yet', 'Send a message without leaving the call.') : ListView(padding: const EdgeInsets.all(12), children: messages.map((message) => Align(alignment: message.mine ? Alignment.centerRight : Alignment.centerLeft, child: Card(color: message.mine ? Theme.of(context).colorScheme.primaryContainer : null, child: Padding(padding: const EdgeInsets.all(10), child: Text(message.text))))).toList())),
+                  _Composer(controller: input, hint: 'Message during call', send: () { final text = input.text; input.clear(); widget.state.sendMessage(widget.peer, text); }),
+                ]),
+              ),
+            ),
+          );
+        },
+      );
 }
 
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message, required this.replyMessage, required this.retry, required this.onLongPress});
+  const _MessageBubble({required this.message, required this.replyMessage, required this.retry, required this.onLongPress, required this.audioPlayer, required this.voiceNoteActive, required this.playVoiceNote});
   final ChatMessage message;
   final ChatMessage? replyMessage;
   final VoidCallback retry;
   final VoidCallback onLongPress;
+  final AudioPlayer audioPlayer;
+  final bool voiceNoteActive;
+  final VoidCallback playVoiceNote;
 
   @override
   Widget build(BuildContext context) {
@@ -440,18 +578,22 @@ class _MessageBubble extends StatelessWidget {
           statusColor = Colors.red;
       }
     }
+    final isAudio = message.attachmentMime?.startsWith('audio/') == true;
     return Align(
       alignment: message.mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Card(
         child: InkWell(
-          onTap: message.mine && message.status == DeliveryStatus.failed && message.attachmentPath == null ? retry : message.attachmentPath != null ? () => OpenFilex.open(message.attachmentPath!) : null,
+          onTap: message.mine && message.status == DeliveryStatus.failed && message.attachmentPath == null ? retry : message.attachmentPath != null && !isAudio ? () => OpenFilex.open(message.attachmentPath!) : null,
           onLongPress: onLongPress,
           child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             if (replyMessage != null) Container(width: 220, padding: const EdgeInsets.all(7), margin: const EdgeInsets.only(bottom: 6), decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(7)), child: Text('${replyMessage!.sender}: ${replyMessage!.text}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
-            Text(message.text),
-            if (message.attachmentName != null) Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.all(8), decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.outlineVariant), borderRadius: BorderRadius.circular(8)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(message.attachmentMime?.startsWith('audio/') == true ? Icons.mic : message.attachmentMime?.startsWith('image/') == true ? Icons.image : Icons.attach_file), const SizedBox(width: 6), Flexible(child: Text('${message.attachmentName} • ${_fileSize(message.attachmentSize)}', overflow: TextOverflow.ellipsis))])),
+            if (!isAudio) Text(message.text),
+            if (isAudio)
+              _InlineVoiceNote(player: audioPlayer, active: voiceNoteActive, onPlay: playVoiceNote)
+            else if (message.attachmentName != null)
+              Container(margin: const EdgeInsets.only(top: 6), padding: const EdgeInsets.all(8), decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.outlineVariant), borderRadius: BorderRadius.circular(8)), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(message.attachmentMime?.startsWith('image/') == true ? Icons.image : Icons.attach_file), const SizedBox(width: 6), Flexible(child: Text('${message.attachmentName} • ${_fileSize(message.attachmentSize)}', overflow: TextOverflow.ellipsis))])),
             const SizedBox(height: 3),
             Row(mainAxisSize: MainAxisSize.min, children: [if (message.reactions.isNotEmpty) Text(message.reactions.values.join(' ')), const SizedBox(width: 6), Text(_clock(message.sentAt), style: Theme.of(context).textTheme.labelSmall), if (statusIcon != null) ...[const SizedBox(width: 4), Icon(statusIcon, size: 14, color: statusColor)]]),
           ]),
@@ -460,6 +602,50 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+}
+
+class _InlineVoiceNote extends StatelessWidget {
+  const _InlineVoiceNote({required this.player, required this.active, required this.onPlay});
+  final AudioPlayer player;
+  final bool active;
+  final VoidCallback onPlay;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 230,
+        child: Row(
+          children: [
+            StreamBuilder<PlayerState>(
+              stream: active ? player.playerStateStream : null,
+              builder: (_, snapshot) {
+                final playing = active && (snapshot.data?.playing ?? player.playing);
+                return IconButton.filledTonal(onPressed: onPlay, icon: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded));
+              },
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: StreamBuilder<Duration>(
+                stream: active ? player.positionStream : null,
+                builder: (_, positionSnapshot) => StreamBuilder<Duration?>(
+                  stream: active ? player.durationStream : null,
+                  builder: (_, durationSnapshot) {
+                    final position = active ? positionSnapshot.data ?? Duration.zero : Duration.zero;
+                    final duration = active ? durationSnapshot.data ?? Duration.zero : Duration.zero;
+                    final progress = duration.inMilliseconds == 0 ? 0.0 : (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0).toDouble();
+                    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      LinearProgressIndicator(value: progress, minHeight: 4, borderRadius: BorderRadius.circular(4)),
+                      const SizedBox(height: 5),
+                      Text(active ? '${_duration(position)} / ${_duration(duration)}' : 'Voice note', style: Theme.of(context).textTheme.labelSmall),
+                    ]);
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.graphic_eq_rounded, color: _blue),
+          ],
+        ),
+      );
 }
 
 class GroupsScreen extends StatelessWidget {
@@ -514,6 +700,78 @@ class GroupsScreen extends StatelessWidget {
       name.dispose();
       description.dispose();
     });
+  }
+}
+
+class FilesScreen extends StatelessWidget {
+  const FilesScreen({super.key, required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: state,
+        builder: (_, __) {
+          final attachments = state.messages.where((message) => message.attachmentPath != null).toList().reversed.toList();
+          final received = attachments.where((message) => !message.mine).toList();
+          final sent = attachments.where((message) => message.mine).toList();
+          return DefaultTabController(
+            length: 2,
+            child: Column(
+              children: [
+                const TabBar(tabs: [Tab(text: 'Received'), Tab(text: 'Sent')]),
+                Expanded(child: TabBarView(children: [_FileList(state: state, messages: received), _FileList(state: state, messages: sent)])),
+                SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => _choosePeerForFile(context), icon: const Icon(Icons.send_rounded), label: const Text('SEND A FILE'))))),
+              ],
+            ),
+          );
+        },
+      );
+
+  void _choosePeerForFile(BuildContext context) {
+    final peers = state.peers.where((peer) => peer.online && !peer.blocked).toList();
+    if (peers.isEmpty) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No nearby online device is available.'))); return; }
+    showModalBottomSheet<void>(context: context, builder: (sheetContext) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const ListTile(title: Text('Send file to', style: TextStyle(fontWeight: FontWeight.bold))),
+      ...peers.map((peer) => ListTile(leading: CircleAvatar(child: Text(_initial(peer.name))), title: Text(peer.name), subtitle: const Text('Online'), onTap: () { Navigator.pop(sheetContext); state.pickAndSendAttachment(peer); })),
+    ])));
+  }
+}
+
+class _FileList extends StatelessWidget {
+  const _FileList({required this.state, required this.messages});
+  final AppState state;
+  final List<ChatMessage> messages;
+
+  @override
+  Widget build(BuildContext context) {
+    if (messages.isEmpty) return const _Empty('No shared files', 'Files and voice notes shared in chats will appear here.');
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: messages.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 6),
+      itemBuilder: (_, index) {
+        final message = messages[index];
+        final peer = state.peers.where((value) => value.id == message.peerId).firstOrNull;
+        final isAudio = message.attachmentMime?.startsWith('audio/') == true;
+        final isImage = message.attachmentMime?.startsWith('image/') == true;
+        return Card(
+          child: ListTile(
+            leading: CircleAvatar(backgroundColor: const Color(0xFFE7EFFF), child: Icon(isAudio ? Icons.graphic_eq_rounded : isImage ? Icons.image_rounded : Icons.insert_drive_file_rounded, color: _blue)),
+            title: Text(isAudio ? 'Voice note' : message.attachmentName ?? 'Shared file', maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text('${message.mine ? 'Sent to' : 'From'} ${peer?.name ?? message.sender} • ${_fileSize(message.attachmentSize)}\n${_time(message.sentAt)}'),
+            isThreeLine: true,
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              if (isAudio && peer != null) {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(state: state, peer: peer)));
+              } else {
+                OpenFilex.open(message.attachmentPath!);
+              }
+            },
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -933,6 +1191,8 @@ class _MessageSearchDelegate extends SearchDelegate<ChatMessage?> {
 }
 
 String _clock(DateTime date) => '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+String _initial(String? name) { final clean = name?.trim() ?? ''; return clean.isEmpty ? '?' : clean[0].toUpperCase(); }
+String _duration(Duration value) => '${value.inMinutes.toString().padLeft(2, '0')}:${(value.inSeconds % 60).toString().padLeft(2, '0')}';
 String _fileSize(int? bytes) {
   if (bytes == null) return '';
   if (bytes < 1024) return '$bytes B';

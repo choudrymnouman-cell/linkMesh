@@ -40,6 +40,7 @@ class AppState extends ChangeNotifier {
   bool initialized = false;
   String? startupWarning;
   String? networkError;
+  String? callError;
   final Map<String, Completer<void>> _deliveryAcks = {};
   final Set<String> _retryingPeers = {};
   final Map<String, _IncomingAttachment> _incomingAttachments = {};
@@ -291,8 +292,50 @@ class AppState extends ChangeNotifier {
   Future<void> _sendGroupState(MeshGroup group, String type, {MeshPeer? only}) async { final payload = {'groupId': group.id, 'name': group.name, 'description': group.description, 'members': group.members, 'ownerId': group.ownerId, 'adminIds': group.adminIds, 'isPrivate': group.isPrivate}; final targets = only == null ? peers.where((p) => group.members.contains(p.id) && p.online && !p.blocked) : [only]; for (final peer in targets) { await mesh.sendToHost(peer.host, type, payload); } }
   Future<void> toggleFavorite(MeshPeer peer) async { peer.favorite = !peer.favorite; await _persist(); notifyListeners(); }
   Future<void> toggleBlocked(MeshPeer peer) async { peer.blocked = !peer.blocked; await _persist(); notifyListeners(); }
-  Future<void> startCall(MeshPeer peer, bool video) async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) return; if (video) { final camera = await Permission.camera.request(); if (!camera.isGranted) return; } await callService.initialize(); final id = const Uuid().v4(); calls.insert(0, CallRecord(id: id, peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); await callService.start(targetId: peer.id, targetName: peer.name, withVideo: video, id: id); notifyListeners(); }
-  Future<void> acceptCall() async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) { await callService.reject(); return; } if (callService.video) { final camera = await Permission.camera.request(); if (!camera.isGranted) { await callService.reject(); return; } } await callService.initialize(); calls.insert(0, CallRecord(id: callService.callId ?? const Uuid().v4(), peerName: callService.peerName ?? 'Peer', video: callService.video, startedAt: DateTime.now(), outgoing: false)); await _persist(); await callService.accept(); notifyListeners(); }
+  Future<bool> startCall(MeshPeer peer, bool video) async {
+    callError = null;
+    if (callService.active) { callError = 'Finish the current call before starting another one.'; notifyListeners(); return false; }
+    if (!peer.online || peer.blocked) { callError = 'This device is not currently reachable.'; notifyListeners(); return false; }
+    try {
+      final microphone = await Permission.microphone.request();
+      if (!microphone.isGranted) { callError = 'Microphone permission is required for calls.'; notifyListeners(); return false; }
+      if (video) {
+        final camera = await Permission.camera.request();
+        if (!camera.isGranted) { callError = 'Camera permission is required for video calls.'; notifyListeners(); return false; }
+      }
+      await callService.initialize();
+      final id = const Uuid().v4();
+      await callService.start(targetId: peer.id, targetName: peer.name, withVideo: video, id: id);
+      calls.insert(0, CallRecord(id: id, peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true));
+      await _persist(); notifyListeners(); return true;
+    } catch (error) {
+      callError = callService.error ?? 'The call could not be started.';
+      debugPrint('LinkMesh call start failed: $error');
+      notifyListeners(); return false;
+    }
+  }
+  Future<bool> acceptCall() async {
+    callError = null;
+    try {
+      final microphone = await Permission.microphone.request();
+      if (!microphone.isGranted) { callError = 'Microphone permission is required for calls.'; await callService.reject(); notifyListeners(); return false; }
+      if (callService.video) {
+        final camera = await Permission.camera.request();
+        if (!camera.isGranted) { callError = 'Camera permission is required for video calls.'; await callService.reject(); notifyListeners(); return false; }
+      }
+      await callService.initialize();
+      final id = callService.callId ?? const Uuid().v4();
+      final peerName = callService.peerName ?? 'Peer';
+      final isVideo = callService.video;
+      await callService.accept();
+      calls.insert(0, CallRecord(id: id, peerName: peerName, video: isVideo, startedAt: DateTime.now(), outgoing: false));
+      await _persist(); notifyListeners(); return true;
+    } catch (error) {
+      callError = callService.error ?? 'The incoming call could not be connected.';
+      debugPrint('LinkMesh call accept failed: $error');
+      notifyListeners(); return false;
+    }
+  }
   Future<void> _sendCallSignal(String targetId, Map<String, dynamic> signal) async { final peer = peers.where((p) => p.id == targetId && p.online && !p.blocked).firstOrNull; final sent = peer != null && await mesh.sendToHost(peer.host, 'call_signal', signal); if (!sent) await mesh.sendRoutedPacket(targetId, 'call_signal', signal); }
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
   Future<bool> exportEncryptedBackup() async {
