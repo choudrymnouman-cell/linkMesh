@@ -708,7 +708,7 @@ class SettingsScreen extends StatelessWidget {
               subtitle: Text(state.networkRunning ? 'Discovery active' : 'Discovery stopped'),
             ),
             ListTile(leading: const Icon(Icons.history), title: const Text('Call history'), subtitle: Text('${state.calls.length} attempts'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
-            ListTile(leading: const Icon(Icons.device_hub), title: const Text('Bluetooth & Wi-Fi Direct'), subtitle: Text(state.p2p.status), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => P2pTransportScreen(state: state)))),
+            if (Platform.isAndroid) ListTile(leading: const Icon(Icons.device_hub), title: const Text('Bluetooth & Wi-Fi Direct'), subtitle: Text(state.p2p.status), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => P2pTransportScreen(state: state)))),
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Clear local messages and history'), onTap: state.clearLocalData),
             const ListTile(leading: Icon(Icons.info_outline), title: Text('LinkMesh'), subtitle: Text('Flutter recreation • local-first messaging')),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_p2p_connection/flutter_p2p_connection.dart';
 
@@ -14,6 +15,7 @@ class P2pTransportService extends ChangeNotifier {
 
   Future<void> initialize() async {
     if (initialized) return;
+    if (!Platform.isAndroid) { status = 'Wi-Fi Direct is available on Android'; initialized = true; notifyListeners(); return; }
     await host.initialize();
     await client.initialize();
     _subscriptions.add(host.streamHotspotState().listen((state) { status = 'Host: $state'; notifyListeners(); }));
@@ -22,6 +24,7 @@ class P2pTransportService extends ChangeNotifier {
   }
 
   Future<bool> prepare() async {
+    if (!Platform.isAndroid) return false;
     if (!await host.checkP2pPermissions()) await host.askP2pPermissions();
     if (!await host.checkBluetoothPermissions()) await host.askBluetoothPermissions();
     if (!await host.checkWifiEnabled()) await host.enableWifiServices();
@@ -50,10 +53,11 @@ class P2pTransportService extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    if (!Platform.isAndroid) return;
     if (hosting) { await host.removeGroup(); } else { await client.disconnect(); }
     hosting = false; scanning = false; status = 'Wi-Fi Direct idle'; notifyListeners();
   }
 
   @override
-  void dispose() { for (final subscription in _subscriptions) { unawaited(subscription.cancel()); } unawaited(host.dispose()); unawaited(client.dispose()); super.dispose(); }
+  void dispose() { for (final subscription in _subscriptions) { unawaited(subscription.cancel()); } if (Platform.isAndroid) { unawaited(host.dispose()); unawaited(client.dispose()); } super.dispose(); }
 }
