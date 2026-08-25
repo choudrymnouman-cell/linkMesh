@@ -26,6 +26,10 @@ jobs:
           cache: true
       - name: Generate iOS platform
         run: flutter create --platforms=ios --org com.linkmesh --project-name linkmesh_offline_chat .
+      - name: Set minimum iOS version
+        run: |
+          sed -i '' "s/^# platform :ios, '.*'/platform :ios, '15.5'/" ios/Podfile
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.5;/g' ios/Runner.xcodeproj/project.pbxproj
       - name: Configure iOS permissions
         run: |
           PLIST=ios/Runner/Info.plist
