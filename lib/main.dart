@@ -18,7 +18,7 @@ class _LinkMeshBootstrapState extends State<LinkMeshBootstrap> with WidgetsBindi
       useMaterial3: true,
       scaffoldBackgroundColor: const Color(0xFFF5F8FD),
       appBarTheme: const AppBarTheme(backgroundColor: Color(0xFFF5F8FD), surfaceTintColor: Colors.transparent, centerTitle: false),
-      cardTheme: CardThemeData(elevation: 0, color: Colors.white, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(18)))),
+      cardTheme: const CardThemeData(elevation: 0, color: Colors.white, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(18)))),
       inputDecorationTheme: const InputDecorationTheme(filled: true, fillColor: Colors.white, border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14)), borderSide: BorderSide.none)),
       navigationBarTheme: const NavigationBarThemeData(height: 70, backgroundColor: Colors.white, indicatorColor: Color(0xFFDDEBFF)),
     ),
