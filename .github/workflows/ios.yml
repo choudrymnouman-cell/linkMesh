@@ -1,0 +1,54 @@
+name: iOS Unsigned IPA
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate iOS platform
+        run: flutter create --platforms=ios --org com.linkmesh --project-name linkmesh_offline_chat .
+      - name: Configure iOS permissions
+        run: |
+          PLIST=ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string LinkMesh uses the camera for video calls and QR pairing." "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string LinkMesh uses the microphone for voice notes and calls." "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string LinkMesh can attach your location to an SOS alert." "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string LinkMesh discovers and communicates with nearby trusted phones." "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :BGTaskSchedulerPermittedIdentifiers array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :BGTaskSchedulerPermittedIdentifiers:0 string com.pravera.flutter_foreground_task.refresh" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string fetch" "$PLIST"
+      - run: flutter pub get
+      - name: Build unsigned iOS application
+        run: flutter build ios --release --no-codesign
+      - name: Package unsigned IPA
+        run: |
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload LinkMesh-v3.1.0-unsigned.ipa
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkmesh-ios-unsigned-ipa
+          path: LinkMesh-v3.1.0-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
