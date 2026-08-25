@@ -2,6 +2,8 @@
 
 LinkMesh is a local-first Flutter messenger for nearby Android phones. It works without a cloud account and can communicate through shared Wi-Fi, a phone hotspot, or a BLE-assisted Wi-Fi Direct group.
 
+Version 3.3 introduces a cleaner navy/cyan interface inspired by the supplied reference and makes QR pairing part of first-time setup. A phone can create a private network automatically, join by scanning another LinkMesh phone, or enter a six-digit code manually. QR pairing is also available from Home, Nearby, the top bar, and Settings.
+
 ## Completed features
 
 - AES-256-GCM encrypted mesh packets and secure QR key pairing

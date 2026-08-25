@@ -12,6 +12,7 @@ import 'package:just_audio/just_audio.dart';
 
 import '../app_state.dart';
 import '../models/models.dart';
+import '../services/qr_pairing.dart';
 
 const _blue = Color(0xFF2B64F6);
 
@@ -28,12 +29,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final codeController = TextEditingController();
   int page = 0;
 
-  static const data = [
-    ('Stay Connected. Anywhere.', 'No Internet, no cloud account. Talk to nearby LinkMesh devices.', Icons.hub_rounded),
-    ('Local-first Messaging', 'Discover phones on the same Wi-Fi or hotspot and exchange messages directly.', Icons.wifi_tethering_rounded),
-    ('Emergency Ready', 'Broadcast SOS and community updates to nearby nodes.', Icons.sos_rounded),
-  ];
-
   @override
   void dispose() {
     controller.dispose();
@@ -43,57 +38,84 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final item = data[page];
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              const Spacer(),
-              if (page == 0)
-                ClipRRect(borderRadius: BorderRadius.circular(28), child: Image.asset('assets/images/linkmesh_icon.png', width: 108, height: 108))
-              else
-                Icon(item.$3, size: 88, color: _blue),
-              const SizedBox(height: 24),
-              Text(item.$1, textAlign: TextAlign.center, style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 12),
-              Text(item.$2, textAlign: TextAlign.center),
-              const Spacer(),
-              if (page < 2)
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () => setState(() => page++),
-                    child: const Padding(padding: EdgeInsets.all(14), child: Text('Continue')),
-                  ),
-                )
-              else ...[
-                TextField(controller: controller, decoration: const InputDecoration(labelText: 'Display name', border: OutlineInputBorder())),
-                const SizedBox(height: 12),
-                TextField(controller: codeController, obscureText: true, decoration: const InputDecoration(labelText: 'Private mesh key', helperText: 'Enter six digits or generate a stronger key', border: OutlineInputBorder())),
-                TextButton.icon(onPressed: () { codeController.text = widget.state.generateStrongMeshSecret(); setState(() {}); }, icon: const Icon(Icons.auto_awesome), label: const Text('Generate stronger private key')),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () {
-                      if (!widget.state.validMeshSecret(codeController.text)) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter six digits or generate a strong private key.')));
-                        return;
-                      }
-                      widget.state.setProfile(controller.text, codeController.text);
-                    },
-                    child: const Padding(padding: EdgeInsets.all(14), child: Text('START LINKMESH')),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
+        child: AnimatedSwitcher(duration: const Duration(milliseconds: 250), child: page == 0 ? _welcome(context) : _profile(context)),
       ),
     );
   }
+
+  Widget _welcome(BuildContext context) => ListView(
+        key: const ValueKey('welcome'),
+        padding: const EdgeInsets.fromLTRB(24, 30, 24, 24),
+        children: [
+          Row(children: [ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.asset('assets/images/linkmesh_icon.png', width: 48, height: 48)), const SizedBox(width: 12), const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LINKMESH', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w900, letterSpacing: 1)), Text('Stay connected. Anywhere.', style: TextStyle(color: Colors.black54))])]),
+          const SizedBox(height: 42),
+          Container(
+            height: 260,
+            decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF071A3D), Color(0xFF0A3F78)]), borderRadius: BorderRadius.circular(30)),
+            child: Stack(alignment: Alignment.center, children: [
+              ...List.generate(3, (index) => Container(width: 90.0 + index * 55, height: 90.0 + index * 55, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: const Color(0xFF39D9E8).withValues(alpha: .23))))),
+              const Icon(Icons.hub_rounded, size: 110, color: Color(0xFF43E5DD)),
+              const Positioned(left: 32, top: 38, child: _MeshNode(icon: Icons.phone_android)),
+              const Positioned(right: 32, top: 58, child: _MeshNode(icon: Icons.smartphone)),
+              const Positioned(left: 48, bottom: 34, child: _MeshNode(icon: Icons.tablet_android)),
+              const Positioned(right: 54, bottom: 28, child: _MeshNode(icon: Icons.phone_iphone)),
+            ]),
+          ),
+          const SizedBox(height: 30),
+          const Text('Offline communication.\nLimitless connection.', style: TextStyle(fontSize: 30, height: 1.15, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 12),
+          const Text('Create a secure nearby network for messages, voice and video calls, groups, files and emergency alerts — without the Internet.', style: TextStyle(height: 1.5, color: Colors.black54)),
+          const SizedBox(height: 28),
+          FilledButton.icon(onPressed: () { codeController.text = widget.state.generateStrongMeshSecret(); setState(() => page = 1); }, icon: const Icon(Icons.add_circle_outline), label: const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Text('CREATE PRIVATE NETWORK'))),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(onPressed: _scanToJoin, icon: const Icon(Icons.qr_code_scanner), label: const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Text('JOIN WITH QR CODE'))),
+          TextButton(onPressed: () => setState(() => page = 1), child: const Text('Join with a 6-digit code')),
+          const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.lock_outline, size: 16, color: Colors.green), SizedBox(width: 6), Text('Private • encrypted • local only', style: TextStyle(fontSize: 12, color: Colors.black54))]),
+        ],
+      );
+
+  Widget _profile(BuildContext context) => ListView(
+        key: const ValueKey('profile'),
+        padding: const EdgeInsets.all(24),
+        children: [
+          Align(alignment: Alignment.centerLeft, child: IconButton(onPressed: () => setState(() => page = 0), icon: const Icon(Icons.arrow_back))),
+          const SizedBox(height: 28),
+          const CircleAvatar(radius: 44, backgroundColor: Color(0xFFDDEBFF), child: Icon(Icons.person_rounded, size: 48, color: _blue)),
+          const SizedBox(height: 24),
+          const Text('Set up your profile', textAlign: TextAlign.center, style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          const Text('Nearby people will see this name. No phone number or account is required.', textAlign: TextAlign.center, style: TextStyle(color: Colors.black54)),
+          const SizedBox(height: 30),
+          TextField(controller: controller, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Display name', prefixIcon: Icon(Icons.person_outline))),
+          const SizedBox(height: 14),
+          TextField(controller: codeController, obscureText: true, keyboardType: TextInputType.number, onChanged: (_) => setState(() {}), decoration: const InputDecoration(labelText: 'Private network key', helperText: 'Use the same key on trusted phones', prefixIcon: Icon(Icons.key_rounded))),
+          const SizedBox(height: 10),
+          if (widget.state.validMeshSecret(codeController.text)) const ListTile(contentPadding: EdgeInsets.zero, leading: Icon(Icons.verified_user_rounded, color: Colors.green), title: Text('Secure network key ready'), subtitle: Text('You can share it later using QR pairing.')),
+          const SizedBox(height: 20),
+          FilledButton(
+            onPressed: () {
+              if (!widget.state.validMeshSecret(codeController.text)) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a 6-digit network code or go back and scan a LinkMesh QR.'))); return; }
+              widget.state.setProfile(controller.text, codeController.text);
+            },
+            child: const Padding(padding: EdgeInsets.all(15), child: Text('START LINKMESH')),
+          ),
+        ],
+      );
+
+  Future<void> _scanToJoin() async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerScreen(state: widget.state)));
+    if (!mounted || !widget.state.validMeshSecret(widget.state.meshCode)) return;
+    codeController.text = widget.state.meshCode;
+    setState(() => page = 1);
+  }
+}
+
+class _MeshNode extends StatelessWidget {
+  const _MeshNode({required this.icon});
+  final IconData icon;
+  @override Widget build(BuildContext context) => Container(width: 46, height: 46, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)]), child: Icon(icon, color: _blue));
 }
 
 class MainShell extends StatefulWidget {
@@ -119,8 +141,9 @@ class _MainShellState extends State<MainShell> {
     const titles = ['Dashboard', 'People Nearby', 'Chats', 'Groups', 'Files'];
     return Scaffold(
       appBar: AppBar(
-        title: Text(titles[index]),
+        title: Row(children: [ClipRRect(borderRadius: BorderRadius.circular(9), child: Image.asset('assets/images/linkmesh_icon.png', width: 34, height: 34)), const SizedBox(width: 10), Expanded(child: Text(titles[index], style: const TextStyle(fontWeight: FontWeight.w800)))]),
         actions: [
+          IconButton(tooltip: 'QR pairing', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: widget.state))), icon: const Icon(Icons.qr_code_2_rounded)),
           IconButton(
             tooltip: 'Restart mesh network',
             onPressed: widget.state.restartNetwork,
@@ -195,12 +218,12 @@ class DashboardScreen extends StatelessWidget {
             _Action(Icons.call_rounded, 'Calls', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
             _Action(Icons.people_alt_rounded, 'People', () => navigate(1)),
             _Action(Icons.folder_rounded, 'Files', () => navigate(4)),
-            _Action(Icons.groups_rounded, 'Groups', () => navigate(3)),
+            _Action(Icons.qr_code_scanner_rounded, 'Pair QR', () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state)))),
             _Action(Icons.sos_rounded, 'SOS', () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: state)))),
           ],
         ),
         const SizedBox(height: 18),
-        const Text('Recent community alerts', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        Row(children: [const Expanded(child: Text('Community feed', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state))), child: const Text('View all'))]),
         ...state.posts.take(4).map(
               (post) => Card(
                 child: ListTile(
@@ -272,7 +295,7 @@ class NearbyScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              FilledButton.icon(onPressed: state.restartNetwork, icon: const Icon(Icons.refresh), label: const Text('REFRESH NEARBY DEVICES')),
+              Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerScreen(state: state))), icon: const Icon(Icons.qr_code_scanner), label: const Text('SCAN QR'))), const SizedBox(width: 10), Expanded(child: FilledButton.icon(onPressed: state.restartNetwork, icon: const Icon(Icons.refresh), label: const Text('REFRESH')))]),
             ],
           );
         },
@@ -942,9 +965,11 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: state,
-        builder: (_, __) => ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+        builder: (_, __) => Scaffold(
+          appBar: AppBar(title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w800))),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
             Card(
               child: ListTile(
                 leading: const CircleAvatar(child: Icon(Icons.person)),
@@ -970,7 +995,8 @@ class SettingsScreen extends StatelessWidget {
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Clear local messages and history'), onTap: state.clearLocalData),
             const ListTile(leading: Icon(Icons.info_outline), title: Text('LinkMesh'), subtitle: Text('Flutter recreation • local-first messaging')),
-          ],
+            ],
+          ),
         ),
       );
 
@@ -1026,16 +1052,22 @@ class QrPairingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final payload = 'linkmesh:v2:${state.meshCode}';
+    final payload = buildLinkMeshQrPayload(state.meshCode);
     return Scaffold(
-      appBar: AppBar(title: const Text('Secure QR pairing')),
+      appBar: AppBar(title: const Text('QR pairing', style: TextStyle(fontWeight: FontWeight.w800))),
       body: ListView(padding: const EdgeInsets.all(24), children: [
-        const Text('Show this QR code only to a trusted person. It contains the private key for your encrypted local network.', textAlign: TextAlign.center),
-        const SizedBox(height: 20),
-        Center(child: ColoredBox(color: Colors.white, child: Padding(padding: const EdgeInsets.all(12), child: QrImageView(data: payload, size: 240)))),
-        const SizedBox(height: 20),
-        FilledButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerScreen(state: state))), icon: const Icon(Icons.qr_code_scanner), label: const Text('Scan another LinkMesh QR')),
-        OutlinedButton.icon(onPressed: () async { await state.updateMeshCode(state.generateStrongMeshSecret()); if (context.mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state))); }, icon: const Icon(Icons.refresh), label: const Text('Generate a new secure network key')),
+        const Icon(Icons.verified_user_rounded, color: _blue, size: 42),
+        const SizedBox(height: 10),
+        const Text('Connect a trusted phone', textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 8),
+        const Text('Open LinkMesh on the other phone and scan this code. Both phones will join the same encrypted local network.', textAlign: TextAlign.center),
+        const SizedBox(height: 22),
+        Center(child: Container(padding: const EdgeInsets.all(18), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), boxShadow: const [BoxShadow(color: Color(0x1A146EF5), blurRadius: 24)]), child: QrImageView(data: payload, size: 238))),
+        const SizedBox(height: 18),
+        const Card(child: Padding(padding: EdgeInsets.all(14), child: Row(children: [Icon(Icons.lock_outline, color: Colors.green), SizedBox(width: 10), Expanded(child: Text('Only share this QR with people you trust. It contains your private network key.'))]))),
+        const SizedBox(height: 12),
+        FilledButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerScreen(state: state))), icon: const Icon(Icons.qr_code_scanner), label: const Padding(padding: EdgeInsets.symmetric(vertical: 13), child: Text('SCAN A LINKMESH QR'))),
+        OutlinedButton.icon(onPressed: () async { await state.updateMeshCode(state.generateStrongMeshSecret()); if (context.mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state))); }, icon: const Icon(Icons.refresh), label: const Text('Create a new private network key')),
       ]),
     );
   }
@@ -1049,16 +1081,51 @@ class QrScannerScreen extends StatefulWidget {
 
 class _QrScannerScreenState extends State<QrScannerScreen> {
   bool handled = false;
-  @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('Scan trusted device')), body: MobileScanner(onDetect: (capture) async {
+  bool invalidCodeSeen = false;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(title: const Text('Scan trusted device')),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            MobileScanner(onDetect: _detect),
+            IgnorePointer(child: Center(child: Container(width: 260, height: 260, decoration: BoxDecoration(border: Border.all(color: invalidCodeSeen ? Colors.orange : const Color(0xFF43E5DD), width: 4), borderRadius: BorderRadius.circular(28))))),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: SafeArea(
+                child: Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(color: Colors.black.withValues(alpha: .75), borderRadius: BorderRadius.circular(18)),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(invalidCodeSeen ? 'This is not a LinkMesh pairing QR.' : 'Place the LinkMesh QR inside the frame', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    const Text('The network key is saved locally and pairing finishes automatically.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    TextButton(onPressed: _enterCode, child: const Text('Enter 6-digit code instead')),
+                  ]),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Future<void> _detect(BarcodeCapture capture) async {
     if (handled || capture.barcodes.isEmpty) return;
-    final raw = capture.barcodes.first.rawValue ?? '';
-    if (!raw.startsWith('linkmesh:v2:')) return;
-    final secret = raw.substring('linkmesh:v2:'.length);
-    if (!widget.state.validMeshSecret(secret)) return;
+    final secret = parseLinkMeshQrPayload(capture.barcodes.first.rawValue ?? '');
+    if (secret == null) { if (!invalidCodeSeen && mounted) setState(() => invalidCodeSeen = true); return; }
     handled = true;
     await widget.state.updateMeshCode(secret);
-    if (context.mounted) Navigator.pop(context);
-  }));
+    if (mounted) Navigator.pop(context, true);
+  }
+
+  void _enterCode() {
+    final controller = TextEditingController();
+    showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(title: const Text('Join private network'), content: TextField(controller: controller, autofocus: true, obscureText: true, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: '6-digit network code')), actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')), FilledButton(onPressed: () async { final secret = controller.text.trim(); if (!widget.state.validMeshSecret(secret)) return; handled = true; await widget.state.updateMeshCode(secret); if (dialogContext.mounted) Navigator.pop(dialogContext); if (mounted) Navigator.pop(context, true); }, child: const Text('Join'))])).whenComplete(controller.dispose);
+  }
 }
 
 class CallHistoryScreen extends StatelessWidget {
