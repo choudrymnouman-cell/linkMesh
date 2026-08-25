@@ -38,6 +38,7 @@ class AppState extends ChangeNotifier {
   bool darkMode = false;
   bool networkRunning = false;
   bool initialized = false;
+  String? startupWarning;
   String? networkError;
   final Map<String, Completer<void>> _deliveryAcks = {};
   final Set<String> _retryingPeers = {};
@@ -49,39 +50,68 @@ class AppState extends ChangeNotifier {
   final List<CallRecord> calls = [];
 
   Future<void> initialize() async {
-    _prefs = await SharedPreferences.getInstance();
-    _store = await LocalStore.open();
-    await notifications.initialize();
-    await callService.initialize();
-    backgroundMesh.initialize();
-    await backgroundMesh.stop();
-    await p2p.initialize();
-    deviceId = _prefs!.getString('deviceId') ?? const Uuid().v4();
-    username = _prefs!.getString('username') ?? 'Mesh User';
-    meshCode = _prefs!.getString('meshCode') ?? '';
-    onboarded = _prefs!.getBool('onboarded') ?? false;
-    darkMode = _prefs!.getBool('darkMode') ?? false;
-    if (onboarded && !validMeshSecret(meshCode)) onboarded = false;
-    final migrated = _prefs!.getBool('sqliteMigrated') ?? false;
-    await _loadList('peers', (j) => MeshPeer.fromJson(j), peers, migrated);
-    await _loadList('messages', (j) => ChatMessage.fromJson(j), messages, migrated);
-    await _loadList('groups', (j) => MeshGroup.fromJson(j), groups, migrated);
-    await _loadList('posts', (j) => CommunityPost.fromJson(j), posts, migrated);
-    await _loadList('calls', (j) => CallRecord.fromJson(j), calls, migrated);
-    for (final group in groups.where((g) => g.ownerId.isEmpty && g.members.contains(deviceId))) { group.ownerId = deviceId; if (!group.adminIds.contains(deviceId)) group.adminIds.add(deviceId); }
-    if (groups.isEmpty) groups.add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false));
-    if (posts.isEmpty) posts.add(CommunityPost(id: 'welcome', author: 'LinkMesh', text: 'Local mesh ready. Nearby devices can discover this phone while the app is open.', createdAt: DateTime.now()));
-    await _prefs!.setString('deviceId', deviceId);
-    if (!migrated) { await _persist(); await _prefs!.setBool('sqliteMigrated', true); }
-    initialized = true;
-    for (final packet in await backgroundMesh.drainPackets()) { _onPacket(packet); }
-    notifyListeners();
-    if (onboarded) await startNetwork();
+    final warnings = <String>[];
+    try {
+      try {
+        _prefs = await SharedPreferences.getInstance().timeout(const Duration(seconds: 5));
+      } catch (error) {
+        warnings.add('Settings could not be loaded');
+        debugPrint('LinkMesh settings initialization failed: $error');
+      }
+      try {
+        _store = await LocalStore.open().timeout(const Duration(seconds: 8));
+      } catch (error) {
+        warnings.add('Local history is temporarily unavailable');
+        debugPrint('LinkMesh database initialization failed: $error');
+      }
+
+      deviceId = _prefs?.getString('deviceId') ?? const Uuid().v4();
+      username = _prefs?.getString('username') ?? 'Mesh User';
+      meshCode = _prefs?.getString('meshCode') ?? '';
+      onboarded = _prefs?.getBool('onboarded') ?? false;
+      darkMode = _prefs?.getBool('darkMode') ?? false;
+      if (onboarded && !validMeshSecret(meshCode)) onboarded = false;
+      final migrated = _prefs?.getBool('sqliteMigrated') ?? false;
+      await Future.wait([
+        _loadList('peers', (j) => MeshPeer.fromJson(j), peers, migrated),
+        _loadList('messages', (j) => ChatMessage.fromJson(j), messages, migrated),
+        _loadList('groups', (j) => MeshGroup.fromJson(j), groups, migrated),
+        _loadList('posts', (j) => CommunityPost.fromJson(j), posts, migrated),
+        _loadList('calls', (j) => CallRecord.fromJson(j), calls, migrated),
+      ]).timeout(const Duration(seconds: 8));
+      for (final group in groups.where((g) => g.ownerId.isEmpty && g.members.contains(deviceId))) { group.ownerId = deviceId; if (!group.adminIds.contains(deviceId)) group.adminIds.add(deviceId); }
+      if (groups.isEmpty) groups.add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false));
+      if (posts.isEmpty) posts.add(CommunityPost(id: 'welcome', author: 'LinkMesh', text: 'Local mesh ready. Nearby devices can discover this phone while the app is open.', createdAt: DateTime.now()));
+      await _prefs?.setString('deviceId', deviceId).timeout(const Duration(seconds: 3));
+      if (!migrated && _store != null) {
+        await _persist().timeout(const Duration(seconds: 5));
+        await _prefs?.setBool('sqliteMigrated', true).timeout(const Duration(seconds: 3));
+      }
+    } catch (error, stackTrace) {
+      warnings.add('Some saved data could not be restored');
+      debugPrint('LinkMesh core startup failed: $error\n$stackTrace');
+    } finally {
+      startupWarning = warnings.isEmpty ? null : warnings.join('. ');
+      initialized = true;
+      notifyListeners();
+    }
+
+    // Native integrations are useful but must never block the first screen.
+    unawaited(_initializeOptionalServices());
+    if (onboarded) unawaited(startNetwork());
+  }
+
+  Future<void> _initializeOptionalServices() async {
+    try { await notifications.initialize().timeout(const Duration(seconds: 4)); } catch (error) { debugPrint('Notifications unavailable: $error'); }
+    try { await callService.initialize().timeout(const Duration(seconds: 4)); } catch (error) { debugPrint('Call renderer unavailable: $error'); }
+    try { backgroundMesh.initialize(); await backgroundMesh.stop().timeout(const Duration(seconds: 4)); } catch (error) { debugPrint('Background mesh unavailable: $error'); }
+    try { await p2p.initialize().timeout(const Duration(seconds: 5)); } catch (error) { debugPrint('Wi-Fi Direct unavailable: $error'); }
   }
 
   Future<void> _loadList<T>(String key, T Function(Map<String, dynamic>) parse, List<T> target, bool migrated) async {
     if (migrated) {
-      target.addAll((await _store!.readCollection(key)).map(parse));
+      final store = _store;
+      if (store != null) target.addAll((await store.readCollection(key)).map(parse));
       return;
     }
     final raw = _prefs?.getString(key); if (raw == null) return;
@@ -92,14 +122,16 @@ class AppState extends ChangeNotifier {
     return _persistQueue;
   }
   Future<void> _persistNow() async {
-    final p = _prefs; if (p == null) return;
-    await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode);
+    final p = _prefs;
+    if (p != null) { await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode); }
     if (messages.length > 2000) messages.removeRange(0, messages.length - 2000);
-    await _store!.replaceCollection('peers', peers.map((e) => e.toJson()));
-    await _store!.replaceCollection('messages', messages.map((e) => e.toJson()));
-    await _store!.replaceCollection('groups', groups.map((e) => e.toJson()));
-    await _store!.replaceCollection('posts', posts.take(200).map((e) => e.toJson()));
-    await _store!.replaceCollection('calls', calls.take(100).map((e) => e.toJson()));
+    final store = _store;
+    if (store == null) return;
+    await store.replaceCollection('peers', peers.map((e) => e.toJson()));
+    await store.replaceCollection('messages', messages.map((e) => e.toJson()));
+    await store.replaceCollection('groups', groups.map((e) => e.toJson()));
+    await store.replaceCollection('posts', posts.take(200).map((e) => e.toJson()));
+    await store.replaceCollection('calls', calls.take(100).map((e) => e.toJson()));
   }
 
   bool validMeshSecret(String value) => RegExp(r'^\d{6}$').hasMatch(value.trim()) || RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(value.trim());
@@ -259,8 +291,8 @@ class AppState extends ChangeNotifier {
   Future<void> _sendGroupState(MeshGroup group, String type, {MeshPeer? only}) async { final payload = {'groupId': group.id, 'name': group.name, 'description': group.description, 'members': group.members, 'ownerId': group.ownerId, 'adminIds': group.adminIds, 'isPrivate': group.isPrivate}; final targets = only == null ? peers.where((p) => group.members.contains(p.id) && p.online && !p.blocked) : [only]; for (final peer in targets) { await mesh.sendToHost(peer.host, type, payload); } }
   Future<void> toggleFavorite(MeshPeer peer) async { peer.favorite = !peer.favorite; await _persist(); notifyListeners(); }
   Future<void> toggleBlocked(MeshPeer peer) async { peer.blocked = !peer.blocked; await _persist(); notifyListeners(); }
-  Future<void> startCall(MeshPeer peer, bool video) async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) return; if (video) { final camera = await Permission.camera.request(); if (!camera.isGranted) return; } final id = const Uuid().v4(); calls.insert(0, CallRecord(id: id, peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); await callService.start(targetId: peer.id, targetName: peer.name, withVideo: video, id: id); notifyListeners(); }
-  Future<void> acceptCall() async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) { await callService.reject(); return; } if (callService.video) { final camera = await Permission.camera.request(); if (!camera.isGranted) { await callService.reject(); return; } } calls.insert(0, CallRecord(id: callService.callId ?? const Uuid().v4(), peerName: callService.peerName ?? 'Peer', video: callService.video, startedAt: DateTime.now(), outgoing: false)); await _persist(); await callService.accept(); notifyListeners(); }
+  Future<void> startCall(MeshPeer peer, bool video) async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) return; if (video) { final camera = await Permission.camera.request(); if (!camera.isGranted) return; } await callService.initialize(); final id = const Uuid().v4(); calls.insert(0, CallRecord(id: id, peerName: peer.name, video: video, startedAt: DateTime.now(), outgoing: true)); await _persist(); await callService.start(targetId: peer.id, targetName: peer.name, withVideo: video, id: id); notifyListeners(); }
+  Future<void> acceptCall() async { final microphone = await Permission.microphone.request(); if (!microphone.isGranted) { await callService.reject(); return; } if (callService.video) { final camera = await Permission.camera.request(); if (!camera.isGranted) { await callService.reject(); return; } } await callService.initialize(); calls.insert(0, CallRecord(id: callService.callId ?? const Uuid().v4(), peerName: callService.peerName ?? 'Peer', video: callService.video, startedAt: DateTime.now(), outgoing: false)); await _persist(); await callService.accept(); notifyListeners(); }
   Future<void> _sendCallSignal(String targetId, Map<String, dynamic> signal) async { final peer = peers.where((p) => p.id == targetId && p.online && !p.blocked).firstOrNull; final sent = peer != null && await mesh.sendToHost(peer.host, 'call_signal', signal); if (!sent) await mesh.sendRoutedPacket(targetId, 'call_signal', signal); }
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
   Future<bool> exportEncryptedBackup() async {
