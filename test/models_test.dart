@@ -17,9 +17,11 @@ void main() {
   });
 
   test('peer preferences survive JSON round trip', () {
-    final restored = MeshPeer.fromJson(MeshPeer(id: 'p', name: 'Peer', host: '192.168.1.2', favorite: true, blocked: true).toJson());
+    final restored = MeshPeer.fromJson(MeshPeer(id: 'p', name: 'Peer', host: '192.168.1.2', favorite: true, blocked: true, avatarHash: 'abc', photoPath: '/data/avatar.jpg').toJson());
     expect(restored.favorite, isTrue);
     expect(restored.blocked, isTrue);
+    expect(restored.avatarHash, 'abc');
+    expect(restored.photoPath, '/data/avatar.jpg');
   });
 
   test('private group roles survive JSON round trip', () {
