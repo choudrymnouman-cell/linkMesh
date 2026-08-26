@@ -2,7 +2,7 @@
 
 LinkMesh is a local-first Flutter messenger for nearby Android phones. It works without a cloud account and can communicate through shared Wi-Fi, a phone hotspot, or a BLE-assisted Wi-Fi Direct group.
 
-Version 3.3 introduces a cleaner navy/cyan interface inspired by the supplied reference and makes QR pairing part of first-time setup. A phone can create a private network automatically, join by scanning another LinkMesh phone, or enter a six-digit code manually. QR pairing is also available from Home, Nearby, the top bar, and Settings.
+Version 3.4 adds one-second automatic same-network discovery, fast reconnect bursts, direct device-aware QR pairing, profile photos, participant selection during group creation, and dedicated background message and incoming-call alerts. A phone can create a private network automatically, join by scanning another LinkMesh phone, or enter a six-digit code manually.
 
 ## Completed features
 
@@ -16,6 +16,7 @@ Version 3.3 introduces a cleaner navy/cyan interface inspired by the supplied re
 - Community broadcasts and location-aware SOS relayed across the mesh
 - High-priority Android message, file, group, call, and SOS notifications
 - Android foreground mesh listening while the UI is minimized, with queued packet replay on resume
+- Automatic profile-photo exchange between trusted peers and avatar display in nearby, chat, and call screens
 - Bluetooth LE discovery and Wi-Fi Direct host/client setup for router-free communication
 - Encrypted backup/restore, diagnostics, theme selection, and local-data reset
 
@@ -42,7 +43,7 @@ For a basic test, install the CI APK on two Android phones, pair them with the s
 
 ## APK artifact
 
-Every successful CI build now uploads `app-debug.apk` as the `linkmesh-debug-apk` GitHub Actions artifact.
+Every successful CI build uploads installable, architecture-specific release APKs as the `linkmesh-release-apks` GitHub Actions artifact.
 
 ## Architecture note
 

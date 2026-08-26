@@ -38,6 +38,8 @@ class LocalMeshService {
   String? _id;
   String? _name;
   SecureMeshCodec? _codec;
+  Map<String, dynamic> _presenceData = const {};
+  List<InternetAddress> _broadcastAddresses = [InternetAddress('255.255.255.255')];
   final _packets = StreamController<MeshPacket>.broadcast();
   final Map<String, DateTime> _seenRoutes = {};
   static const int maxPacketBytes = 64 * 1024;
@@ -47,11 +49,11 @@ class LocalMeshService {
   bool get running => _udp != null && _server != null;
 
   Future<void> start({required String id, required String name, required String meshCode}) async {
+    if (running) await stop();
     _id = id;
     _name = name;
     _codec = SecureMeshCodec(meshCode);
-    if (running) return;
-    await stop();
+    await _refreshBroadcastAddresses();
     _udp = await RawDatagramSocket.bind(InternetAddress.anyIPv4, discoveryPort, reuseAddress: true, reusePort: true);
     _udp!.broadcastEnabled = true;
     _udp!.listen((event) async {
@@ -84,11 +86,35 @@ class LocalMeshService {
         } catch (_) {}
       });
     });
-    _beacon = Timer.periodic(const Duration(seconds: 3), (_) => broadcastPresence());
+    _beacon = Timer.periodic(const Duration(seconds: 1), (_) => broadcastPresence());
     await broadcastPresence();
+    for (final delay in const [250, 700, 1400]) {
+      Future<void>.delayed(Duration(milliseconds: delay), () async {
+        if (running) await broadcastPresence();
+      });
+    }
   }
 
-  Future<void> broadcastPresence() => broadcastPacket('presence', {'port': messagePort});
+  void setPresenceData(Map<String, dynamic> data) {
+    _presenceData = Map<String, dynamic>.from(data);
+    if (running) unawaited(broadcastPresence());
+  }
+
+  Future<void> broadcastPresence() => broadcastPacket('presence', {'port': messagePort, ..._presenceData});
+
+  Future<void> _refreshBroadcastAddresses() async {
+    final addresses = <String>{'255.255.255.255'};
+    try {
+      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLoopback: false);
+      for (final interface in interfaces) {
+        for (final address in interface.addresses) {
+          final parts = address.address.split('.');
+          if (parts.length == 4) addresses.add('${parts[0]}.${parts[1]}.${parts[2]}.255');
+        }
+      }
+    } catch (_) {}
+    _broadcastAddresses = addresses.map(InternetAddress.new).toList(growable: false);
+  }
 
   Future<void> broadcastPacket(String type, Map<String, dynamic> payload) async {
     final udp = _udp;
@@ -96,7 +122,9 @@ class LocalMeshService {
     final packet = MeshPacket(type: type, senderId: _id!, senderName: _name!, payload: payload);
     final data = utf8.encode(await _codec!.encrypt(packet.toJson()));
     if (data.length > maxPacketBytes) throw ArgumentError('Packet is too large');
-    udp.send(data, InternetAddress('255.255.255.255'), discoveryPort);
+    for (final address in _broadcastAddresses) {
+      udp.send(data, address, discoveryPort);
+    }
   }
 
   Future<void> sendRoutedPacket(String targetId, String type, Map<String, dynamic> payload) async {
@@ -120,7 +148,7 @@ class LocalMeshService {
     if (_id == null || _name == null || host.isEmpty) return false;
     Socket? socket;
     try {
-      socket = await Socket.connect(host, messagePort, timeout: const Duration(seconds: 3));
+      socket = await Socket.connect(host, messagePort, timeout: const Duration(milliseconds: 900));
       final encoded = await _codec!.encrypt(MeshPacket(type: type, senderId: _id!, senderName: _name!, payload: payload).toJson());
       if (utf8.encode(encoded).length > maxPacketBytes) return false;
       socket.writeln(encoded);
@@ -174,7 +202,9 @@ class LocalMeshService {
     if (udp == null || codec == null) return;
     final data = utf8.encode(await codec.encrypt(packet.toJson()));
     if (data.length > maxPacketBytes) throw ArgumentError('Packet is too large');
-    udp.send(data, InternetAddress('255.255.255.255'), discoveryPort);
+    for (final address in _broadcastAddresses) {
+      udp.send(data, address, discoveryPort);
+    }
   }
 
   String _newRouteId() => '${_id ?? 'node'}-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';

@@ -9,6 +9,8 @@ import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:crypto/crypto.dart';
+import 'package:image/image.dart' as image_lib;
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
 import 'services/local_store.dart';
@@ -17,6 +19,7 @@ import 'services/notification_service.dart';
 import 'services/call_service.dart';
 import 'services/background_mesh_service.dart';
 import 'services/p2p_transport_service.dart';
+import 'services/qr_pairing.dart';
 
 class AppState extends ChangeNotifier {
   AppState() { callService = CallService(_sendCallSignal); callService.addListener(notifyListeners); }
@@ -33,6 +36,10 @@ class AppState extends ChangeNotifier {
   String deviceId = '';
   String username = 'Mesh User';
   String meshCode = '';
+  String profilePhotoPath = '';
+  String profilePhotoHash = '';
+  String pendingPairDeviceId = '';
+  String pendingPairDeviceName = '';
   bool onboarded = false;
   bool sosActive = false;
   bool darkMode = false;
@@ -43,6 +50,7 @@ class AppState extends ChangeNotifier {
   String? callError;
   final Map<String, Completer<void>> _deliveryAcks = {};
   final Set<String> _retryingPeers = {};
+  final Set<String> _avatarRequests = {};
   final Map<String, _IncomingAttachment> _incomingAttachments = {};
   final List<MeshPeer> peers = [];
   final List<ChatMessage> messages = [];
@@ -69,6 +77,10 @@ class AppState extends ChangeNotifier {
       deviceId = _prefs?.getString('deviceId') ?? const Uuid().v4();
       username = _prefs?.getString('username') ?? 'Mesh User';
       meshCode = _prefs?.getString('meshCode') ?? '';
+      profilePhotoPath = _prefs?.getString('profilePhotoPath') ?? '';
+      profilePhotoHash = _prefs?.getString('profilePhotoHash') ?? '';
+      pendingPairDeviceId = _prefs?.getString('pendingPairDeviceId') ?? '';
+      pendingPairDeviceName = _prefs?.getString('pendingPairDeviceName') ?? '';
       onboarded = _prefs?.getBool('onboarded') ?? false;
       darkMode = _prefs?.getBool('darkMode') ?? false;
       if (onboarded && !validMeshSecret(meshCode)) onboarded = false;
@@ -124,7 +136,7 @@ class AppState extends ChangeNotifier {
   }
   Future<void> _persistNow() async {
     final p = _prefs;
-    if (p != null) { await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode); }
+    if (p != null) { await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode); await p.setString('profilePhotoPath', profilePhotoPath); await p.setString('profilePhotoHash', profilePhotoHash); await p.setString('pendingPairDeviceId', pendingPairDeviceId); await p.setString('pendingPairDeviceName', pendingPairDeviceName); }
     if (messages.length > 2000) messages.removeRange(0, messages.length - 2000);
     final store = _store;
     if (store == null) return;
@@ -144,6 +156,42 @@ class AppState extends ChangeNotifier {
   Future<void> updateProfile(String name) async { username = name.trim().isEmpty ? username : name.trim(); await _persist(); notifyListeners(); if (networkRunning) { await restartNetwork(); } }
   Future<void> updateMeshCode(String code) async { if (!validMeshSecret(code)) return; meshCode = code.trim(); await _persist(); notifyListeners(); await restartNetwork(); }
 
+  Future<bool> pickProfilePhoto() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
+    final picked = result?.files.single;
+    var bytes = picked?.bytes;
+    if (bytes == null && picked?.path != null) bytes = await File(picked!.path!).readAsBytes();
+    if (bytes == null || bytes.isEmpty) return false;
+    final decoded = image_lib.decodeImage(bytes);
+    if (decoded == null) return false;
+    final resized = decoded.width > 256 || decoded.height > 256
+        ? image_lib.copyResize(decoded, width: decoded.width >= decoded.height ? 256 : null, height: decoded.height > decoded.width ? 256 : null)
+        : decoded;
+    final compressed = Uint8List.fromList(image_lib.encodeJpg(resized, quality: 72));
+    if (compressed.length > 60 * 1024) return false;
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/linkmesh_profile.jpg');
+    await file.writeAsBytes(compressed, flush: true);
+    profilePhotoPath = file.path;
+    profilePhotoHash = sha256.convert(compressed).toString();
+    mesh.setPresenceData({'avatarHash': profilePhotoHash});
+    await _persist();
+    notifyListeners();
+    return true;
+  }
+
+  Future<void> completeQrPairing(LinkMeshQrData pairing) async {
+    meshCode = pairing.secret;
+    pendingPairDeviceId = pairing.deviceId;
+    pendingPairDeviceName = pairing.deviceName;
+    if (pairing.hasDevice && !peers.any((peer) => peer.id == pairing.deviceId)) {
+      peers.add(MeshPeer(id: pairing.deviceId, name: pairing.deviceName.isEmpty ? 'Paired device' : pairing.deviceName, host: '', online: false));
+    }
+    await _persist();
+    notifyListeners();
+    if (onboarded) await restartNetwork();
+  }
+
   Future<void> startNetwork() async {
     if (!onboarded || networkRunning) return;
     networkError = null;
@@ -157,15 +205,17 @@ class AppState extends ChangeNotifier {
       }
       _sub ??= mesh.packets.listen(_onPacket);
       if (!validMeshSecret(meshCode)) throw StateError('A valid private mesh key is required.');
+      mesh.setPresenceData({'avatarHash': profilePhotoHash});
       await mesh.start(id: deviceId, name: username, meshCode: meshCode);
       networkRunning = true;
-      _peerSweep ??= Timer.periodic(const Duration(seconds: 5), (_) => _expirePeers());
+      _peerSweep ??= Timer.periodic(const Duration(seconds: 2), (_) => _expirePeers());
+      if (pendingPairDeviceId.isNotEmpty) unawaited(mesh.sendRoutedPacket(pendingPairDeviceId, 'pair_request', {'targetId': pendingPairDeviceId}));
     } catch (e) { networkRunning = false; networkError = e.toString(); }
     notifyListeners();
   }
   Future<void> restartNetwork() async { await mesh.stop(); networkRunning = false; notifyListeners(); await startNetwork(); }
   Future<void> stopNetwork() async { await mesh.stop(); networkRunning = false; for (final p in peers) { p.online = false; } await _persist(); notifyListeners(); }
-  Future<void> enterBackground() async { if (!onboarded || !networkRunning || callService.active) return; await stopNetwork(); await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode); }
+  Future<void> enterBackground() async { if (!onboarded || !networkRunning || callService.active) return; await stopNetwork(); await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode, avatarHash: profilePhotoHash); }
   Future<void> resumeFromBackground() async { await backgroundMesh.stop(); for (final packet in await backgroundMesh.drainPackets()) { _onPacket(packet); } if (onboarded && !networkRunning) await startNetwork(); }
   Future<void> createP2pGroup() async { await p2p.createGroup(); await restartNetwork(); }
   Future<void> connectP2pHost(dynamic device) async { await p2p.connect(device); await restartNetwork(); }
@@ -173,7 +223,7 @@ class AppState extends ChangeNotifier {
 
   void _expirePeers() {
     final now = DateTime.now(); bool changed = false;
-    for (final p in peers) { final online = p.lastSeen != null && now.difference(p.lastSeen!).inSeconds < 12; if (p.online != online) { p.online = online; changed = true; } }
+    for (final p in peers) { final online = p.lastSeen != null && now.difference(p.lastSeen!).inSeconds < 5; if (p.online != online) { p.online = online; changed = true; } }
     if (changed) { _persist(); notifyListeners(); }
   }
 
@@ -183,9 +233,34 @@ class AppState extends ChangeNotifier {
     if (peer == null) { peer = MeshPeer(id: packet.senderId, name: packet.senderName, host: host, lastSeen: DateTime.now()); peers.add(peer); }
     else { peer.name = packet.senderName; if (host.isNotEmpty) peer.host = host; peer.online = true; peer.lastSeen = DateTime.now(); }
     if (peer.blocked) { _persist(); notifyListeners(); return; }
-    if (packet.type == 'presence') unawaited(_flushQueuedMessages(peer));
+    if (packet.type == 'presence') {
+      unawaited(_flushQueuedMessages(peer));
+      final remoteHash = packet.payload['avatarHash']?.toString() ?? '';
+      if (remoteHash.isNotEmpty && remoteHash != peer.avatarHash && host.isNotEmpty && _avatarRequests.add(peer.id)) {
+        unawaited(mesh.sendToHost(host, 'profile_request', {'avatarHash': remoteHash}));
+        Future<void>.delayed(const Duration(seconds: 10), () => _avatarRequests.remove(peer!.id));
+      }
+      if (pendingPairDeviceId == peer.id) {
+        pendingPairDeviceId = '';
+        pendingPairDeviceName = '';
+        unawaited(mesh.sendToHost(host, 'pair_request', {'targetId': peer.id}));
+      }
+    }
     final id = packet.payload['id']?.toString() ?? '${DateTime.now().microsecondsSinceEpoch}';
-    if (packet.type == 'message') {
+    if (packet.type == 'pair_request') {
+      final target = packet.payload['targetId']?.toString() ?? '';
+      if (host.isNotEmpty && (target.isEmpty || target == deviceId)) {
+        unawaited(mesh.sendToHost(host, 'pair_accept', {'avatarHash': profilePhotoHash}));
+      }
+    } else if (packet.type == 'pair_accept') {
+      pendingPairDeviceId = '';
+      pendingPairDeviceName = '';
+      unawaited(notifications.showMessage('LinkMesh connected', '${peer.name} is ready to chat'));
+    } else if (packet.type == 'profile_request') {
+      if (host.isNotEmpty && profilePhotoPath.isNotEmpty) unawaited(_sendProfilePhoto(host));
+    } else if (packet.type == 'profile_data') {
+      unawaited(_savePeerPhoto(peer, packet.payload));
+    } else if (packet.type == 'message') {
       if (!messages.any((m) => m.id == id)) {
         messages.add(ChatMessage(id: id, peerId: packet.senderId, sender: packet.senderName, text: packet.payload['text']?.toString() ?? '', sentAt: DateTime.now(), mine: false, replyToId: packet.payload['replyToId']?.toString()));
         unawaited(notifications.showMessage(packet.senderName, packet.payload['text']?.toString() ?? 'New encrypted message'));
@@ -248,7 +323,7 @@ class AppState extends ChangeNotifier {
       unawaited(notifications.showSos(packet.senderName, detail));
     } else if (packet.type == 'call_signal') {
       unawaited(callService.receive(packet.senderId, packet.senderName, packet.payload));
-      if (packet.payload['kind'] == 'offer') unawaited(notifications.showMessage(packet.senderName, packet.payload['video'] == true ? 'Incoming encrypted video call' : 'Incoming encrypted voice call'));
+      if (packet.payload['kind'] == 'offer') unawaited(notifications.showIncomingCall(packet.senderName, video: packet.payload['video'] == true));
     } else if (packet.type == 'post') {
       posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: packet.payload['text']?.toString() ?? '', createdAt: DateTime.now()));
     }
@@ -284,7 +359,7 @@ class AppState extends ChangeNotifier {
   Future<void> triggerSos() async { sosActive = true; Position? position; try { var permission = await Geolocator.checkPermission(); if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission(); if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) position = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 8))); } on Object { position = null; } final id = const Uuid().v4(); final text = position == null ? 'SOS ACTIVE — emergency assistance requested.' : 'SOS ACTIVE — location ${position.latitude}, ${position.longitude}'; posts.insert(0, CommunityPost(id: id, author: username, text: text, createdAt: DateTime.now(), emergency: true, latitude: position?.latitude, longitude: position?.longitude)); notifyListeners(); await mesh.broadcastRoutedPacket('sos', {'id': id, 'text': 'Emergency assistance requested.', 'latitude': position?.latitude, 'longitude': position?.longitude}); await _persist(); }
   void stopSos() { sosActive = false; notifyListeners(); }
 
-  Future<void> createGroup(String name, String description) async { final g = MeshGroup(id: const Uuid().v4(), name: name.trim().isEmpty ? 'Mesh Group' : name.trim(), description: description.trim(), members: [deviceId], ownerId: deviceId, adminIds: [deviceId]); groups.add(g); notifyListeners(); await _persist(); }
+  Future<void> createGroup(String name, String description, {List<MeshPeer> selectedPeers = const []}) async { final memberIds = <String>{deviceId, ...selectedPeers.where((p) => !p.blocked).map((p) => p.id)}.toList(); final g = MeshGroup(id: const Uuid().v4(), name: name.trim().isEmpty ? 'Mesh Group' : name.trim(), description: description.trim(), members: memberIds, ownerId: deviceId, adminIds: [deviceId]); groups.add(g); notifyListeners(); for (final peer in selectedPeers.where((p) => p.online && !p.blocked)) { await _sendGroupState(g, 'group_invite', only: peer); } await _persist(); }
   Future<void> addGroupMember(MeshGroup group, MeshPeer peer) async { if (!canManageGroup(group) || group.members.contains(peer.id)) return; group.members.add(peer.id); await _sendGroupState(group, 'group_invite', only: peer); await _sendGroupState(group, 'group_update'); await _persist(); notifyListeners(); }
   Future<void> removeGroupMember(MeshGroup group, String memberId) async { if (!canManageGroup(group) || memberId == group.ownerId) return; final removedPeer = peers.where((p) => p.id == memberId && p.online).firstOrNull; group.members.remove(memberId); group.adminIds.remove(memberId); if (removedPeer != null) await _sendGroupState(group, 'group_update', only: removedPeer); await _sendGroupState(group, 'group_update'); await _persist(); notifyListeners(); }
   Future<void> toggleGroupAdmin(MeshGroup group, String memberId) async { if (group.ownerId != deviceId || memberId == group.ownerId || !group.members.contains(memberId)) return; if (group.adminIds.contains(memberId)) { group.adminIds.remove(memberId); } else { group.adminIds.add(memberId); } await _sendGroupState(group, 'group_update'); await _persist(); notifyListeners(); }
@@ -433,6 +508,29 @@ class AppState extends ChangeNotifier {
     unawaited(notifications.showMessage(packet.senderName, incoming.mime.startsWith('audio/') ? 'New voice note' : 'New file: ${incoming.name}'));
     if (host.isNotEmpty) await mesh.sendToHost(host, 'ack', {'id': id});
     await _persist(); notifyListeners();
+  }
+  Future<void> _sendProfilePhoto(String host) async {
+    try {
+      final bytes = await File(profilePhotoPath).readAsBytes();
+      if (bytes.isEmpty || bytes.length > 60 * 1024) return;
+      await mesh.sendToHost(host, 'profile_data', {'avatarHash': profilePhotoHash, 'data': base64Encode(bytes)});
+    } catch (_) {}
+  }
+  Future<void> _savePeerPhoto(MeshPeer peer, Map<String, dynamic> payload) async {
+    try {
+      final bytes = base64Decode(payload['data']?.toString() ?? '');
+      final expectedHash = payload['avatarHash']?.toString() ?? '';
+      if (bytes.isEmpty || bytes.length > 60 * 1024 || expectedHash.isEmpty || sha256.convert(bytes).toString() != expectedHash) return;
+      final directory = await getApplicationDocumentsDirectory();
+      final safeId = peer.id.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final file = File('${directory.path}/peer_avatar_$safeId.jpg');
+      await file.writeAsBytes(bytes, flush: true);
+      peer.avatarHash = expectedHash;
+      peer.photoPath = file.path;
+      _avatarRequests.remove(peer.id);
+      await _persist();
+      notifyListeners();
+    } catch (_) {}
   }
   Future<bool> openSystemSettings() => openAppSettings();
   Future<bool> retryMessage(ChatMessage message) async {

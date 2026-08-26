@@ -9,6 +9,8 @@ class MeshPeer {
     this.lastSeen,
     this.favorite = false,
     this.blocked = false,
+    this.avatarHash = '',
+    this.photoPath = '',
   });
 
   final String id;
@@ -18,6 +20,8 @@ class MeshPeer {
   DateTime? lastSeen;
   bool favorite;
   bool blocked;
+  String avatarHash;
+  String photoPath;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -27,6 +31,8 @@ class MeshPeer {
         'lastSeen': lastSeen?.toIso8601String(),
         'favorite': favorite,
         'blocked': blocked,
+        'avatarHash': avatarHash,
+        'photoPath': photoPath,
       };
 
   factory MeshPeer.fromJson(Map<String, dynamic> json) => MeshPeer(
@@ -37,6 +43,8 @@ class MeshPeer {
         lastSeen: DateTime.tryParse('${json['lastSeen'] ?? ''}'),
         favorite: json['favorite'] == true,
         blocked: json['blocked'] == true,
+        avatarHash: json['avatarHash']?.toString() ?? '',
+        photoPath: json['photoPath']?.toString() ?? '',
       );
 }
 

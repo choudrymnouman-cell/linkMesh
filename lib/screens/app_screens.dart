@@ -82,7 +82,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         children: [
           Align(alignment: Alignment.centerLeft, child: IconButton(onPressed: () => setState(() => page = 0), icon: const Icon(Icons.arrow_back))),
           const SizedBox(height: 28),
-          const CircleAvatar(radius: 44, backgroundColor: Color(0xFFDDEBFF), child: Icon(Icons.person_rounded, size: 48, color: _blue)),
+          Center(child: Stack(children: [
+            _ProfileAvatar(path: widget.state.profilePhotoPath, name: controller.text, radius: 48),
+            Positioned(right: 0, bottom: 0, child: IconButton.filled(tooltip: 'Add profile photo', onPressed: () async { await widget.state.pickProfilePhoto(); if (mounted) setState(() {}); }, icon: const Icon(Icons.camera_alt, size: 18))),
+          ])),
           const SizedBox(height: 24),
           const Text('Set up your profile', textAlign: TextAlign.center, style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
           const SizedBox(height: 8),
@@ -272,12 +275,12 @@ class NearbyScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Card(child: ListTile(leading: const CircleAvatar(backgroundColor: Color(0xFFE7EFFF), child: Icon(Icons.radar, color: _blue)), title: Text('${peers.where((peer) => peer.online).length} devices found'), subtitle: const Text('Nearby phones appear automatically while LinkMesh is open'))),
+              Card(child: ListTile(leading: const CircleAvatar(backgroundColor: Color(0xFFE7EFFF), child: Icon(Icons.radar, color: _blue)), title: Text('${peers.where((peer) => peer.online).length} devices connected'), subtitle: const Text('Automatic discovery is active on the same Wi-Fi or hotspot'))),
               if (peers.isEmpty) const _Empty('No nearby nodes', 'Put two phones on the same Wi-Fi/hotspot and open LinkMesh.'),
               ...peers.map(
                 (peer) => Card(
                   child: ListTile(
-                    leading: CircleAvatar(child: Icon(peer.blocked ? Icons.block : Icons.person)),
+                    leading: _PeerAvatar(peer: peer),
                     title: Row(children: [Expanded(child: Text(peer.name)), if (peer.favorite) const Icon(Icons.star, color: Colors.amber, size: 18)]),
                     subtitle: Text(peer.blocked ? 'Blocked' : peer.online ? 'Online • ${peer.host}' : 'Last seen ${_time(peer.lastSeen)}'),
                     trailing: PopupMenuButton<String>(
@@ -320,7 +323,7 @@ class ChatsScreen extends StatelessWidget {
                 final peerMessages = state.messages.where((message) => message.peerId == peer.id && message.groupId == null).toList();
                 return Card(
                   child: ListTile(
-                    leading: CircleAvatar(child: Text(peer.name.isEmpty ? '?' : peer.name[0].toUpperCase())),
+                    leading: _PeerAvatar(peer: peer),
                     title: Text(peer.name),
                     subtitle: Text(peerMessages.isEmpty ? 'Start local chat' : peerMessages.last.text, maxLines: 1, overflow: TextOverflow.ellipsis),
                     trailing: Icon(peer.online ? Icons.circle : Icons.circle_outlined, size: 12, color: peer.online ? Colors.green : Colors.grey),
@@ -378,7 +381,7 @@ class _ChatScreenState extends State<ChatScreen> {
           final messages = widget.state.messages.where((message) => message.peerId == widget.peer.id && message.groupId == null).toList();
           return Scaffold(
             appBar: AppBar(
-              title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(widget.peer.name), Text(widget.peer.online ? 'Online' : 'Offline', style: const TextStyle(fontSize: 11))]),
+              title: Row(children: [_PeerAvatar(peer: widget.peer, radius: 18), const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(widget.peer.name), Text(widget.peer.online ? 'Online • connected automatically' : 'Offline', style: const TextStyle(fontSize: 11))]))]),
               actions: [
                 IconButton(onPressed: () => _search(messages), icon: const Icon(Icons.search)),
                 IconButton(onPressed: () => _call(false), icon: const Icon(Icons.call)),
@@ -506,7 +509,7 @@ class CallScreen extends StatelessWidget {
             Positioned.fill(child: RTCVideoView(call.remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover))
           else
             Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              CircleAvatar(radius: 56, backgroundColor: _blue, child: Text(_initial(call.peerName), style: const TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.bold))),
+              _PeerAvatar(peer: state.peers.where((peer) => peer.id == call.peerId).firstOrNull, name: call.peerName, radius: 56),
               const SizedBox(height: 24),
               Text(call.peerName ?? 'Nearby peer', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
@@ -684,15 +687,19 @@ class GroupsScreen extends StatelessWidget {
             FilledButton.icon(onPressed: () => _create(context), icon: const Icon(Icons.add), label: const Text('Create private group')),
             const SizedBox(height: 10),
             ...state.groups.map(
-              (group) => Card(
+              (group) {
+                final groupMessages = state.messages.where((message) => message.groupId == group.id).toList();
+                final last = groupMessages.isEmpty ? null : groupMessages.last;
+                return Card(
                 child: ListTile(
-                  leading: const Icon(Icons.groups),
+                  leading: CircleAvatar(backgroundColor: const Color(0xFFDDEBFF), child: Text(_initial(group.name), style: const TextStyle(color: _blue, fontWeight: FontWeight.bold))),
                   title: Text(group.name),
-                  subtitle: Text('${group.description}${group.isPrivate ? ' • ${group.members.length} private members' : ' • public'}'),
+                  subtitle: Text(last?.text ?? '${group.members.length} participants${group.description.isEmpty ? '' : ' • ${group.description}'}', maxLines: 1, overflow: TextOverflow.ellipsis),
                   trailing: state.canManageGroup(group) ? IconButton(icon: const Icon(Icons.admin_panel_settings), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupAdminScreen(state: state, group: group)))) : null,
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupChatScreen(state: state, group: group))),
                 ),
-              ),
+              );
+              },
             ),
           ],
         ),
@@ -701,24 +708,30 @@ class GroupsScreen extends StatelessWidget {
   void _create(BuildContext context) {
     final name = TextEditingController();
     final description = TextEditingController();
+    final available = state.peers.where((peer) => peer.online && !peer.blocked).toList();
+    final selected = <String>{};
     showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Create group'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [TextField(controller: name, decoration: const InputDecoration(labelText: 'Name')), TextField(controller: description, decoration: const InputDecoration(labelText: 'Description'))],
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () {
-              state.createGroup(name.text, description.text);
-              Navigator.pop(context);
-            },
-            child: const Text('Create'),
-          ),
-        ],
-      ),
+      builder: (_) => StatefulBuilder(builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('New group'),
+          content: SizedBox(width: 420, child: SingleChildScrollView(child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(controller: name, decoration: const InputDecoration(labelText: 'Group name', prefixIcon: Icon(Icons.groups))),
+              const SizedBox(height: 10),
+              TextField(controller: description, decoration: const InputDecoration(labelText: 'Description (optional)')),
+              const SizedBox(height: 18),
+              Text('Add participants • ${selected.length} selected', style: const TextStyle(fontWeight: FontWeight.bold)),
+              if (available.isEmpty) const Padding(padding: EdgeInsets.only(top: 8), child: Text('Nearby devices will appear here automatically.')),
+              ...available.map((peer) => CheckboxListTile(contentPadding: EdgeInsets.zero, value: selected.contains(peer.id), secondary: _PeerAvatar(peer: peer), title: Text(peer.name), subtitle: const Text('Online'), onChanged: (value) => setDialogState(() { value == true ? selected.add(peer.id) : selected.remove(peer.id); }))),
+            ],
+          ))),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            FilledButton(onPressed: () { state.createGroup(name.text, description.text, selectedPeers: available.where((peer) => selected.contains(peer.id)).toList()); Navigator.pop(dialogContext); }, child: const Text('Create group')),
+          ],
+        )),
     ).whenComplete(() {
       name.dispose();
       description.dispose();
@@ -852,7 +865,10 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
         builder: (_, __) {
           final messages = widget.state.messages.where((message) => message.groupId == widget.group.id).toList();
           return Scaffold(
-            appBar: AppBar(title: Text(widget.group.name)),
+            appBar: AppBar(
+              title: Row(children: [CircleAvatar(radius: 18, backgroundColor: const Color(0xFFDDEBFF), child: Text(_initial(widget.group.name), style: const TextStyle(color: _blue, fontWeight: FontWeight.bold))), const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(widget.group.name), Text('${widget.group.members.length} participants', style: const TextStyle(fontSize: 11))]))]),
+              actions: [IconButton(tooltip: 'Group info', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupAdminScreen(state: widget.state, group: widget.group))), icon: const Icon(Icons.info_outline))],
+            ),
             body: Column(
               children: [
                 Expanded(
@@ -860,7 +876,16 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
                       ? const _Empty('No group messages', 'Messages are broadcast to nearby LinkMesh nodes.')
                       : ListView(
                           padding: const EdgeInsets.all(12),
-                          children: messages.map((message) => Card(child: ListTile(title: Text(message.sender), subtitle: Text(message.text)))).toList(),
+                          children: messages.map((message) => Align(
+                            alignment: message.mine ? Alignment.centerRight : Alignment.centerLeft,
+                            child: Container(
+                              constraints: const BoxConstraints(maxWidth: 310),
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              padding: const EdgeInsets.fromLTRB(12, 8, 10, 6),
+                              decoration: BoxDecoration(color: message.mine ? const Color(0xFFD9FDD3) : Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(14)),
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [if (!message.mine) Text(message.sender, style: const TextStyle(color: _blue, fontWeight: FontWeight.bold, fontSize: 12)), Text(message.text), Align(alignment: Alignment.centerRight, child: Text(_clock(message.sentAt), style: Theme.of(context).textTheme.labelSmall))]),
+                            ),
+                          )).toList(),
                         ),
                 ),
                 _Composer(
@@ -970,14 +995,17 @@ class SettingsScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+            const _SettingsHeader('Your profile'),
             Card(
               child: ListTile(
-                leading: const CircleAvatar(child: Icon(Icons.person)),
+                leading: GestureDetector(onTap: state.pickProfilePhoto, child: _ProfileAvatar(path: state.profilePhotoPath, name: state.username, radius: 25)),
                 title: Text(state.username),
-                subtitle: Text('Node ${state.deviceId.substring(0, 8)}'),
+                subtitle: Text('Tap photo or edit name • Node ${state.deviceId.substring(0, 8)}'),
                 trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () => _edit(context)),
               ),
             ),
+            const _SettingsHeader('Connection'),
+            Card(child: ListTile(leading: Icon(state.networkRunning ? Icons.hub : Icons.link_off, color: state.networkRunning ? Colors.green : Colors.orange), title: const Text('Automatic nearby connection'), subtitle: Text(state.networkRunning ? 'On • same Wi-Fi and hotspot devices connect automatically' : 'Paused • turn on Local mesh network below'), trailing: state.networkRunning ? const Icon(Icons.check_circle, color: Colors.green) : null)),
             SwitchListTile(value: state.darkMode, onChanged: state.toggleTheme, secondary: const Icon(Icons.dark_mode), title: const Text('Dark mode')),
             ListTile(leading: const Icon(Icons.lock), title: const Text('Private mesh code'), subtitle: const Text('AES-256 encrypted trusted network'), trailing: const Icon(Icons.edit), onTap: () => _editMeshCode(context)),
             ListTile(leading: const Icon(Icons.qr_code_2), title: const Text('QR secure pairing'), subtitle: const Text('Connect a trusted phone without typing the key'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state)))),
@@ -990,9 +1018,12 @@ class SettingsScreen extends StatelessWidget {
               title: const Text('Local mesh network'),
               subtitle: Text(state.networkRunning ? 'Discovery active' : 'Discovery stopped'),
             ),
+            const _SettingsHeader('Chats, calls & data'),
             ListTile(leading: const Icon(Icons.history), title: const Text('Call history'), subtitle: Text('${state.calls.length} attempts'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
             if (Platform.isAndroid) ListTile(leading: const Icon(Icons.device_hub), title: const Text('Bluetooth & Wi-Fi Direct'), subtitle: Text(state.p2p.status), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => P2pTransportScreen(state: state)))),
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
+            ListTile(leading: const Icon(Icons.notifications_active_outlined), title: const Text('Background notifications'), subtitle: const Text('Calls and messages remain available while minimized'), trailing: const Icon(Icons.open_in_new), onTap: state.openSystemSettings),
+            const _SettingsHeader('Storage & about'),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Clear local messages and history'), onTap: state.clearLocalData),
             const ListTile(leading: Icon(Icons.info_outline), title: Text('LinkMesh'), subtitle: Text('Flutter recreation • local-first messaging')),
             ],
@@ -1052,7 +1083,7 @@ class QrPairingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final payload = buildLinkMeshQrPayload(state.meshCode);
+    final payload = buildLinkMeshQrPayload(state.meshCode, deviceId: state.deviceId, deviceName: state.username);
     return Scaffold(
       appBar: AppBar(title: const Text('QR pairing', style: TextStyle(fontWeight: FontWeight.w800))),
       body: ListView(padding: const EdgeInsets.all(24), children: [
@@ -1060,7 +1091,7 @@ class QrPairingScreen extends StatelessWidget {
         const SizedBox(height: 10),
         const Text('Connect a trusted phone', textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
         const SizedBox(height: 8),
-        const Text('Open LinkMesh on the other phone and scan this code. Both phones will join the same encrypted local network.', textAlign: TextAlign.center),
+        const Text('Open LinkMesh on the other phone and scan this code. The phones will join the same encrypted network and connect automatically.', textAlign: TextAlign.center),
         const SizedBox(height: 22),
         Center(child: Container(padding: const EdgeInsets.all(18), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), boxShadow: const [BoxShadow(color: Color(0x1A146EF5), blurRadius: 24)]), child: QrImageView(data: payload, size: 238))),
         const SizedBox(height: 18),
@@ -1115,10 +1146,10 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
 
   Future<void> _detect(BarcodeCapture capture) async {
     if (handled || capture.barcodes.isEmpty) return;
-    final secret = parseLinkMeshQrPayload(capture.barcodes.first.rawValue ?? '');
-    if (secret == null) { if (!invalidCodeSeen && mounted) setState(() => invalidCodeSeen = true); return; }
+    final pairing = parseLinkMeshQrData(capture.barcodes.first.rawValue ?? '');
+    if (pairing == null) { if (!invalidCodeSeen && mounted) setState(() => invalidCodeSeen = true); return; }
     handled = true;
-    await widget.state.updateMeshCode(secret);
+    await widget.state.completeQrPairing(pairing);
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -1219,6 +1250,17 @@ class _Composer extends StatelessWidget {
       );
 }
 
+class _SettingsHeader extends StatelessWidget {
+  const _SettingsHeader(this.title);
+  final String title;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(8, 18, 8, 6),
+        child: Text(title.toUpperCase(), style: Theme.of(context).textTheme.labelLarge?.copyWith(color: _blue, fontWeight: FontWeight.w800, letterSpacing: .7)),
+      );
+}
+
 class _Empty extends StatelessWidget {
   const _Empty(this.title, this.subtitle);
   final String title;
@@ -1239,6 +1281,35 @@ class _Empty extends StatelessWidget {
           ),
         ),
       );
+}
+
+class _PeerAvatar extends StatelessWidget {
+  const _PeerAvatar({this.peer, this.name, this.radius = 22});
+  final MeshPeer? peer;
+  final String? name;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) => _ProfileAvatar(path: peer?.photoPath ?? '', name: peer?.name ?? name ?? '', radius: radius);
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({required this.path, required this.name, this.radius = 22});
+  final String path;
+  final String name;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final file = path.isEmpty ? null : File(path);
+    final available = file?.existsSync() == true;
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: const Color(0xFFDDEBFF),
+      backgroundImage: available ? FileImage(file!) : null,
+      child: available ? null : Text(_initial(name), style: TextStyle(color: _blue, fontSize: radius * .75, fontWeight: FontWeight.bold)),
+    );
+  }
 }
 
 class _MessageSearchDelegate extends SearchDelegate<ChatMessage?> {
