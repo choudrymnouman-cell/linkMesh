@@ -14,7 +14,9 @@ import '../app_state.dart';
 import '../models/models.dart';
 import '../services/qr_pairing.dart';
 
-const _blue = Color(0xFF2B64F6);
+const _blue = Color(0xFF0284C7);
+const _cyan = Color(0xFF14B8A6);
+const _navy = Color(0xFF0F172A);
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key, required this.state});
@@ -47,32 +49,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Widget _welcome(BuildContext context) => ListView(
         key: const ValueKey('welcome'),
-        padding: const EdgeInsets.fromLTRB(24, 30, 24, 24),
+        padding: const EdgeInsets.fromLTRB(24, 22, 24, 24),
         children: [
-          Row(children: [ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.asset('assets/images/linkmesh_icon.png', width: 48, height: 48)), const SizedBox(width: 12), const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LINKMESH', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w900, letterSpacing: 1)), Text('Stay connected. Anywhere.', style: TextStyle(color: Colors.black54))])]),
-          const SizedBox(height: 42),
-          Container(
-            height: 260,
-            decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF071A3D), Color(0xFF0A3F78)]), borderRadius: BorderRadius.circular(30)),
-            child: Stack(alignment: Alignment.center, children: [
-              ...List.generate(3, (index) => Container(width: 90.0 + index * 55, height: 90.0 + index * 55, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: const Color(0xFF39D9E8).withValues(alpha: .23))))),
-              const Icon(Icons.hub_rounded, size: 110, color: Color(0xFF43E5DD)),
-              const Positioned(left: 32, top: 38, child: _MeshNode(icon: Icons.phone_android)),
-              const Positioned(right: 32, top: 58, child: _MeshNode(icon: Icons.smartphone)),
-              const Positioned(left: 48, bottom: 34, child: _MeshNode(icon: Icons.tablet_android)),
-              const Positioned(right: 54, bottom: 28, child: _MeshNode(icon: Icons.phone_iphone)),
-            ]),
-          ),
-          const SizedBox(height: 30),
-          const Text('Offline communication.\nLimitless connection.', style: TextStyle(fontSize: 30, height: 1.15, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 12),
-          const Text('Create a secure nearby network for messages, voice and video calls, groups, files and emergency alerts — without the Internet.', style: TextStyle(height: 1.5, color: Colors.black54)),
-          const SizedBox(height: 28),
-          FilledButton.icon(onPressed: () { codeController.text = widget.state.generateStrongMeshSecret(); setState(() => page = 1); }, icon: const Icon(Icons.add_circle_outline), label: const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Text('CREATE PRIVATE NETWORK'))),
+          Row(children: [ClipRRect(borderRadius: BorderRadius.circular(13), child: Image.asset('assets/images/mesh_logo.jpg', width: 52, height: 52)), const SizedBox(width: 12), const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('LINKMESH', style: TextStyle(color: _navy, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 1.5)), Text('Stay Connected. Anywhere.', style: TextStyle(color: Color(0xFF475569), fontWeight: FontWeight.w600))])]),
+          const SizedBox(height: 18),
+          ClipRRect(borderRadius: BorderRadius.circular(22), child: Image.asset('assets/images/img_welcome_illustration.jpg', height: 285, fit: BoxFit.cover)),
+          const SizedBox(height: 18),
+          const Text('No Internet, No Limits.', textAlign: TextAlign.center, style: TextStyle(color: _navy, fontSize: 29, height: 1.15, fontWeight: FontWeight.w900)),
           const SizedBox(height: 10),
-          OutlinedButton.icon(onPressed: _scanToJoin, icon: const Icon(Icons.qr_code_scanner), label: const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Text('JOIN WITH QR CODE'))),
-          TextButton(onPressed: () => setState(() => page = 1), child: const Text('Join with a 6-digit code')),
-          const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.lock_outline, size: 16, color: Colors.green), SizedBox(width: 6), Text('Private • encrypted • local only', style: TextStyle(fontSize: 12, color: Colors.black54))]),
+          const Text('Connect with people nearby and chat, call or share files securely.', textAlign: TextAlign.center, style: TextStyle(fontSize: 15, height: 1.45, color: Color(0xFF475569))),
+          const SizedBox(height: 22),
+          FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: _blue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), onPressed: () { codeController.text = widget.state.generateStrongMeshSecret(); setState(() => page = 1); }, icon: const Icon(Icons.add_link_rounded), label: const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Text('Create Network', style: TextStyle(fontWeight: FontWeight.w800)))),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), onPressed: _scanToJoin, icon: const Icon(Icons.qr_code_scanner), label: const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Text('Join Network', style: TextStyle(fontWeight: FontWeight.w800)))),
+          TextButton(onPressed: () => setState(() => page = 1), child: const Text('Join with network key')),
+          const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.wifi_off_rounded, size: 16, color: _cyan), SizedBox(width: 6), Text('100% Offline Communication', style: TextStyle(fontSize: 12, color: Color(0xFF475569), fontWeight: FontWeight.w600))]),
         ],
       );
 
@@ -87,11 +78,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Positioned(right: 0, bottom: 0, child: IconButton.filled(tooltip: 'Add profile photo', onPressed: () async { await widget.state.pickProfilePhoto(); if (mounted) setState(() {}); }, icon: const Icon(Icons.camera_alt, size: 18))),
           ])),
           const SizedBox(height: 24),
-          const Text('Set up your profile', textAlign: TextAlign.center, style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+          const Text('Set Up Your Profile', textAlign: TextAlign.center, style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
           const SizedBox(height: 8),
-          const Text('Nearby people will see this name. No phone number or account is required.', textAlign: TextAlign.center, style: TextStyle(color: Colors.black54)),
+          const Text('Choose your username call-sign and add a profile picture so your team and nearby devices can discover your node directly.', textAlign: TextAlign.center, style: TextStyle(color: Color(0xFF475569), height: 1.45)),
           const SizedBox(height: 30),
-          TextField(controller: controller, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Display name', prefixIcon: Icon(Icons.person_outline))),
+          TextField(controller: controller, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'User Name', prefixIcon: Icon(Icons.person_outline))),
           const SizedBox(height: 14),
           TextField(controller: codeController, obscureText: true, keyboardType: TextInputType.number, onChanged: (_) => setState(() {}), decoration: const InputDecoration(labelText: 'Private network key', helperText: 'Use the same key on trusted phones', prefixIcon: Icon(Icons.key_rounded))),
           const SizedBox(height: 10),
@@ -102,8 +93,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               if (!widget.state.validMeshSecret(codeController.text)) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a 6-digit network code or go back and scan a LinkMesh QR.'))); return; }
               widget.state.setProfile(controller.text, codeController.text);
             },
-            child: const Padding(padding: EdgeInsets.all(15), child: Text('START LINKMESH')),
+            child: const Padding(padding: EdgeInsets.all(15), child: Text('SAVE PROFILE & START COMM-MESH', style: TextStyle(fontWeight: FontWeight.w800))),
           ),
+          TextButton(onPressed: () => setState(() => page = 0), child: const Text('Back to Welcome Screen')),
         ],
       );
 
@@ -113,12 +105,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     codeController.text = widget.state.meshCode;
     setState(() => page = 1);
   }
-}
-
-class _MeshNode extends StatelessWidget {
-  const _MeshNode({required this.icon});
-  final IconData icon;
-  @override Widget build(BuildContext context) => Container(width: 46, height: 46, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)]), child: Icon(icon, color: _blue));
 }
 
 class MainShell extends StatefulWidget {
@@ -136,15 +122,15 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final screens = <Widget>[
       DashboardScreen(state: widget.state, navigate: (value) => setState(() => index = value)),
-      NearbyScreen(state: widget.state),
       ChatsScreen(state: widget.state),
+      NearbyScreen(state: widget.state),
       GroupsScreen(state: widget.state),
-      FilesScreen(state: widget.state),
+      SettingsScreen(state: widget.state, embedded: true),
     ];
-    const titles = ['Dashboard', 'People Nearby', 'Chats', 'Groups', 'Files'];
+    const titles = ['Dashboard', 'Personal Chats', 'Nearby Nodes', 'Groups', 'Settings'];
     return Scaffold(
       appBar: AppBar(
-        title: Row(children: [ClipRRect(borderRadius: BorderRadius.circular(9), child: Image.asset('assets/images/linkmesh_icon.png', width: 34, height: 34)), const SizedBox(width: 10), Expanded(child: Text(titles[index], style: const TextStyle(fontWeight: FontWeight.w800)))]),
+        title: Row(children: [ClipRRect(borderRadius: BorderRadius.circular(9), child: Image.asset('assets/images/mesh_logo.jpg', width: 36, height: 36)), const SizedBox(width: 10), Expanded(child: Text(titles[index], style: const TextStyle(fontWeight: FontWeight.w900)))]),
         actions: [
           IconButton(tooltip: 'QR pairing', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: widget.state))), icon: const Icon(Icons.qr_code_2_rounded)),
           IconButton(
@@ -152,7 +138,7 @@ class _MainShellState extends State<MainShell> {
             onPressed: widget.state.restartNetwork,
             icon: Icon(widget.state.networkRunning ? Icons.wifi : Icons.wifi_off, color: widget.state.networkRunning ? Colors.green : null),
           ),
-          IconButton(tooltip: 'Settings', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsScreen(state: widget.state))), icon: const Icon(Icons.settings_outlined)),
+          if (index != 4) IconButton(tooltip: 'Emergency Center', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: widget.state))), icon: const Icon(Icons.sos_rounded, color: Colors.red)),
         ],
       ),
       body: IndexedStack(index: index, children: screens),
@@ -161,10 +147,10 @@ class _MainShellState extends State<MainShell> {
         onDestinationSelected: (value) => setState(() => index = value),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.dashboard_rounded), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.radar), label: 'Nearby'),
           NavigationDestination(icon: Icon(Icons.chat), label: 'Chats'),
+          NavigationDestination(icon: Icon(Icons.radar), label: 'Nearby'),
           NavigationDestination(icon: Icon(Icons.groups), label: 'Groups'),
-          NavigationDestination(icon: Icon(Icons.folder_rounded), label: 'Files'),
+          NavigationDestination(icon: Icon(Icons.settings_rounded), label: 'Settings'),
         ],
       ),
     );
@@ -184,15 +170,16 @@ class DashboardScreen extends StatelessWidget {
       children: [
         Container(
           padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(gradient: const LinearGradient(colors: [Color(0xFF154BC6), Color(0xFF2B64F6), Color(0xFF25A9E8)]), borderRadius: BorderRadius.circular(24)),
+          decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF071A3D), Color(0xFF0F3B67)]), borderRadius: BorderRadius.circular(20)),
           child: Row(children: [
-            ClipRRect(borderRadius: BorderRadius.circular(18), child: Image.asset('assets/images/linkmesh_icon.png', width: 68, height: 68)),
+            ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.asset('assets/images/mesh_logo.jpg', width: 72, height: 72)),
             const SizedBox(width: 16),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('MESH NETWORK', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
-              Text(state.networkRunning ? 'Connected' : 'Paused', style: const TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.bold)),
-              Text('$online devices online • ${state.messages.length} messages', style: const TextStyle(color: Colors.white70)),
+              Text(state.networkRunning ? 'ACTIVE P2P LINK' : 'RELAY ACCESS ONLY', style: const TextStyle(color: Color(0xFF5EEAD4), fontSize: 18, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 3),
+              Text(state.networkRunning ? '$online Devices Online' : '0 Devices Online (Offline)', style: const TextStyle(color: Colors.white70)),
             ])),
           ]),
         ),
@@ -207,7 +194,9 @@ class DashboardScreen extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 12),
-        const Text('Quick actions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        Card(child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [const Icon(Icons.network_check_rounded, color: _cyan, size: 32), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('MESH STRENGTH', style: TextStyle(fontSize: 12, color: Color(0xFF64748B), fontWeight: FontWeight.w800)), Text(state.networkRunning ? 'Strong Signal' : 'Disconnected', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900))])), Text('$online', style: const TextStyle(fontSize: 26, color: _blue, fontWeight: FontWeight.w900))]))),
+        const SizedBox(height: 12),
+        const Text('Quick Actions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         GridView.count(
           crossAxisCount: 3,
@@ -217,16 +206,19 @@ class DashboardScreen extends StatelessWidget {
           crossAxisSpacing: 8,
           childAspectRatio: 1.05,
           children: [
-            _Action(Icons.chat_bubble_rounded, 'Chats', () => navigate(2)),
+            _Action(Icons.chat_bubble_rounded, 'Personal Chats', () => navigate(1)),
             _Action(Icons.call_rounded, 'Calls', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
-            _Action(Icons.people_alt_rounded, 'People', () => navigate(1)),
-            _Action(Icons.folder_rounded, 'Files', () => navigate(4)),
-            _Action(Icons.qr_code_scanner_rounded, 'Pair QR', () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state)))),
-            _Action(Icons.sos_rounded, 'SOS', () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: state)))),
+            _Action(Icons.people_alt_rounded, 'Discover Devices', () => navigate(2)),
+            _Action(Icons.folder_rounded, 'Shared Files', () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Shared Files')), body: FilesScreen(state: state))))),
+            _Action(Icons.groups_2_rounded, 'Emergency Groups', () => navigate(3)),
+            _Action(Icons.campaign_rounded, 'Community Feed', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state)))),
           ],
         ),
+        const SizedBox(height: 10),
+        Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state))), icon: const Icon(Icons.qr_code_2_rounded), label: const Text('QR CONNECT'))), const SizedBox(width: 10), Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: state))), icon: const Icon(Icons.sos_rounded), label: const Text('SOS PANIC')))]),
         const SizedBox(height: 18),
-        Row(children: [const Expanded(child: Text('Community feed', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state))), child: const Text('View all'))]),
+        Row(children: [const Expanded(child: Text('Recent Activity', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state))), child: const Text('View all'))]),
+        if (state.posts.isEmpty) const _Empty('No recent activity.', 'Nearby mesh updates will appear here.'),
         ...state.posts.take(4).map(
               (post) => Card(
                 child: ListTile(
@@ -984,18 +976,19 @@ class EmergencyScreen extends StatelessWidget {
 }
 
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key, required this.state});
+  const SettingsScreen({super.key, required this.state, this.embedded = false});
   final AppState state;
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: state,
         builder: (_, __) => Scaffold(
-          appBar: AppBar(title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w800))),
+          appBar: embedded ? null : AppBar(title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w800))),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-            const _SettingsHeader('Your profile'),
+            const _SettingsHeader('My Profile'),
             Card(
               child: ListTile(
                 leading: GestureDetector(onTap: state.pickProfilePhoto, child: _ProfileAvatar(path: state.profilePhotoPath, name: state.username, radius: 25)),
@@ -1004,7 +997,7 @@ class SettingsScreen extends StatelessWidget {
                 trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () => _edit(context)),
               ),
             ),
-            const _SettingsHeader('Connection'),
+            const _SettingsHeader('ADVANCED ROUTING PARAMETERS'),
             Card(child: ListTile(leading: Icon(state.networkRunning ? Icons.hub : Icons.link_off, color: state.networkRunning ? Colors.green : Colors.orange), title: const Text('Automatic nearby connection'), subtitle: Text(state.networkRunning ? 'On • same Wi-Fi and hotspot devices connect automatically' : 'Paused • turn on Local mesh network below'), trailing: state.networkRunning ? const Icon(Icons.check_circle, color: Colors.green) : null)),
             SwitchListTile(value: state.darkMode, onChanged: state.toggleTheme, secondary: const Icon(Icons.dark_mode), title: const Text('Dark mode')),
             ListTile(leading: const Icon(Icons.lock), title: const Text('Private mesh code'), subtitle: const Text('AES-256 encrypted trusted network'), trailing: const Icon(Icons.edit), onTap: () => _editMeshCode(context)),
@@ -1023,9 +1016,10 @@ class SettingsScreen extends StatelessWidget {
             if (Platform.isAndroid) ListTile(leading: const Icon(Icons.device_hub), title: const Text('Bluetooth & Wi-Fi Direct'), subtitle: Text(state.p2p.status), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => P2pTransportScreen(state: state)))),
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
             ListTile(leading: const Icon(Icons.notifications_active_outlined), title: const Text('Background notifications'), subtitle: const Text('Calls and messages remain available while minimized'), trailing: const Icon(Icons.open_in_new), onTap: state.openSystemSettings),
-            const _SettingsHeader('Storage & about'),
+            const _SettingsHeader('DEVELOPER INFORMATION'),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Clear local messages and history'), onTap: state.clearLocalData),
-            const ListTile(leading: Icon(Icons.info_outline), title: Text('LinkMesh'), subtitle: Text('Flutter recreation • local-first messaging')),
+            const ListTile(leading: Icon(Icons.code_rounded), title: Text('App Developed by nomi Developer'), subtitle: Text('nomi developer')),
+            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.2 ACTIVE')),
             ],
           ),
         ),
