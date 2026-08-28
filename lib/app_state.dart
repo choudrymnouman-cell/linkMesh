@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as image_lib;
+import 'package:just_audio/just_audio.dart';
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
 import 'services/local_store.dart';
@@ -22,12 +23,16 @@ import 'services/p2p_transport_service.dart';
 import 'services/qr_pairing.dart';
 
 class AppState extends ChangeNotifier {
-  AppState() { callService = CallService(_sendCallSignal); callService.addListener(notifyListeners); }
+  AppState() {
+    callService = CallService(_sendCallSignal);
+    callService.addListener(_handleCallState);
+  }
   final LocalMeshService mesh = LocalMeshService();
   final NotificationService notifications = NotificationService();
   final BackgroundMeshService backgroundMesh = BackgroundMeshService();
   final P2pTransportService p2p = P2pTransportService();
   late final CallService callService;
+  final AudioPlayer _alertPlayer = AudioPlayer();
   StreamSubscription<MeshPacket>? _sub;
   Timer? _peerSweep;
   SharedPreferences? _prefs;
@@ -43,6 +48,8 @@ class AppState extends ChangeNotifier {
   bool onboarded = false;
   bool sosActive = false;
   bool darkMode = false;
+  bool backgroundNotifications = true;
+  bool automaticDirectConnect = true;
   bool networkRunning = false;
   bool initialized = false;
   String? startupWarning;
@@ -57,6 +64,7 @@ class AppState extends ChangeNotifier {
   final List<MeshGroup> groups = [];
   final List<CommunityPost> posts = [];
   final List<CallRecord> calls = [];
+  final List<String> feedbackMessages = [];
 
   Future<void> initialize() async {
     final warnings = <String>[];
@@ -83,6 +91,9 @@ class AppState extends ChangeNotifier {
       pendingPairDeviceName = _prefs?.getString('pendingPairDeviceName') ?? '';
       onboarded = _prefs?.getBool('onboarded') ?? false;
       darkMode = _prefs?.getBool('darkMode') ?? false;
+      backgroundNotifications = _prefs?.getBool('backgroundNotifications') ?? true;
+      automaticDirectConnect = _prefs?.getBool('automaticDirectConnect') ?? true;
+      feedbackMessages.addAll(_prefs?.getStringList('feedbackMessages') ?? const []);
       if (onboarded && !validMeshSecret(meshCode)) onboarded = false;
       final migrated = _prefs?.getBool('sqliteMigrated') ?? false;
       await Future.wait([
@@ -93,7 +104,7 @@ class AppState extends ChangeNotifier {
         _loadList('calls', (j) => CallRecord.fromJson(j), calls, migrated),
       ]).timeout(const Duration(seconds: 8));
       for (final group in groups.where((g) => g.ownerId.isEmpty && g.members.contains(deviceId))) { group.ownerId = deviceId; if (!group.adminIds.contains(deviceId)) group.adminIds.add(deviceId); }
-      if (groups.isEmpty) groups.add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false));
+      groups.removeWhere((group) => group.id == 'emergency' || group.name == 'Emergency Mesh Group');
       if (posts.isEmpty) posts.add(CommunityPost(id: 'welcome', author: 'LinkMesh', text: 'Local mesh ready. Nearby devices can discover this phone while the app is open.', createdAt: DateTime.now()));
       await _prefs?.setString('deviceId', deviceId).timeout(const Duration(seconds: 3));
       if (!migrated && _store != null) {
@@ -136,7 +147,7 @@ class AppState extends ChangeNotifier {
   }
   Future<void> _persistNow() async {
     final p = _prefs;
-    if (p != null) { await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode); await p.setString('profilePhotoPath', profilePhotoPath); await p.setString('profilePhotoHash', profilePhotoHash); await p.setString('pendingPairDeviceId', pendingPairDeviceId); await p.setString('pendingPairDeviceName', pendingPairDeviceName); }
+    if (p != null) { await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode); await p.setBool('backgroundNotifications', backgroundNotifications); await p.setBool('automaticDirectConnect', automaticDirectConnect); await p.setStringList('feedbackMessages', feedbackMessages.take(100).toList()); await p.setString('profilePhotoPath', profilePhotoPath); await p.setString('profilePhotoHash', profilePhotoHash); await p.setString('pendingPairDeviceId', pendingPairDeviceId); await p.setString('pendingPairDeviceName', pendingPairDeviceName); }
     if (messages.length > 2000) messages.removeRange(0, messages.length - 2000);
     final store = _store;
     if (store == null) return;
@@ -210,12 +221,20 @@ class AppState extends ChangeNotifier {
       networkRunning = true;
       _peerSweep ??= Timer.periodic(const Duration(seconds: 2), (_) => _expirePeers());
       if (pendingPairDeviceId.isNotEmpty) unawaited(mesh.sendRoutedPacket(pendingPairDeviceId, 'pair_request', {'targetId': pendingPairDeviceId}));
+      if (automaticDirectConnect && Platform.isAndroid) {
+        Future<void>.delayed(const Duration(seconds: 5), () async {
+          if (networkRunning && peers.every((peer) => !peer.online)) {
+            await p2p.startAutomatic(deviceId);
+            if (p2p.connected || p2p.hosting) await restartNetwork();
+          }
+        });
+      }
     } catch (e) { networkRunning = false; networkError = e.toString(); }
     notifyListeners();
   }
   Future<void> restartNetwork() async { await mesh.stop(); networkRunning = false; notifyListeners(); await startNetwork(); }
   Future<void> stopNetwork() async { await mesh.stop(); networkRunning = false; for (final p in peers) { p.online = false; } await _persist(); notifyListeners(); }
-  Future<void> enterBackground() async { if (!onboarded || !networkRunning || callService.active) return; await stopNetwork(); await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode, avatarHash: profilePhotoHash); }
+  Future<void> enterBackground() async { if (!onboarded || !networkRunning || callService.active) return; await stopNetwork(); await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode, avatarHash: profilePhotoHash, alertsEnabled: backgroundNotifications); }
   Future<void> resumeFromBackground() async { await backgroundMesh.stop(); for (final packet in await backgroundMesh.drainPackets()) { _onPacket(packet); } if (onboarded && !networkRunning) await startNetwork(); }
   Future<void> createP2pGroup() async { await p2p.createGroup(); await restartNetwork(); }
   Future<void> connectP2pHost(dynamic device) async { await p2p.connect(device); await restartNetwork(); }
@@ -321,6 +340,11 @@ class AppState extends ChangeNotifier {
       final detail = 'SOS: ${packet.payload['text'] ?? 'Emergency assistance requested.'}${latitude == null || longitude == null ? '' : ' Location: $latitude, $longitude'}';
       posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: detail, createdAt: DateTime.now(), emergency: true, latitude: latitude, longitude: longitude));
       unawaited(notifications.showSos(packet.senderName, detail));
+      unawaited(_playSiren());
+    } else if (packet.type == 'siren') {
+      final text = packet.payload['text']?.toString() ?? 'Urgent siren alert';
+      unawaited(notifications.showSiren(packet.senderName, text));
+      unawaited(_playSiren());
     } else if (packet.type == 'call_signal') {
       unawaited(callService.receive(packet.senderId, packet.senderName, packet.payload));
       if (packet.payload['kind'] == 'offer') unawaited(notifications.showIncomingCall(packet.senderName, video: packet.payload['video'] == true));
@@ -356,6 +380,16 @@ class AppState extends ChangeNotifier {
   }
   Future<void> sendGroupMessage(MeshGroup group, String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); messages.add(ChatMessage(id: id, peerId: deviceId, sender: username, text: clean, sentAt: DateTime.now(), mine: true, groupId: group.id)); notifyListeners(); if (group.isPrivate) { for (final memberId in group.members.where((id) => id != deviceId)) { final peer = peers.where((p) => p.id == memberId && p.online && !p.blocked).firstOrNull; final sent = peer != null && await mesh.sendToHost(peer.host, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); if (!sent) await mesh.sendRoutedPacket(memberId, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); } } else { await mesh.broadcastRoutedPacket('group_message', {'id': id, 'groupId': group.id, 'text': clean}); } await _persist(); }
   Future<void> postCommunity(String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); posts.insert(0, CommunityPost(id: id, author: username, text: clean, createdAt: DateTime.now())); notifyListeners(); await mesh.broadcastRoutedPacket('post', {'id': id, 'text': clean}); await _persist(); }
+  Future<void> sendSiren({MeshPeer? peer}) async {
+    await _playSiren();
+    final payload = {'id': const Uuid().v4(), 'text': peer == null ? 'Community siren activated' : 'Urgent siren from $username'};
+    if (peer == null) {
+      await mesh.broadcastRoutedPacket('siren', payload);
+    } else {
+      final sent = peer.online && await mesh.sendToHost(peer.host, 'siren', payload);
+      if (!sent) await mesh.sendRoutedPacket(peer.id, 'siren', payload);
+    }
+  }
   Future<void> triggerSos() async { sosActive = true; Position? position; try { var permission = await Geolocator.checkPermission(); if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission(); if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) position = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 8))); } on Object { position = null; } final id = const Uuid().v4(); final text = position == null ? 'SOS ACTIVE — emergency assistance requested.' : 'SOS ACTIVE — location ${position.latitude}, ${position.longitude}'; posts.insert(0, CommunityPost(id: id, author: username, text: text, createdAt: DateTime.now(), emergency: true, latitude: position?.latitude, longitude: position?.longitude)); notifyListeners(); await mesh.broadcastRoutedPacket('sos', {'id': id, 'text': 'Emergency assistance requested.', 'latitude': position?.latitude, 'longitude': position?.longitude}); await _persist(); }
   void stopSos() { sosActive = false; notifyListeners(); }
 
@@ -413,6 +447,24 @@ class AppState extends ChangeNotifier {
   }
   Future<void> _sendCallSignal(String targetId, Map<String, dynamic> signal) async { final peer = peers.where((p) => p.id == targetId && p.online && !p.blocked).firstOrNull; final sent = peer != null && await mesh.sendToHost(peer.host, 'call_signal', signal); if (!sent) await mesh.sendRoutedPacket(targetId, 'call_signal', signal); }
   Future<void> toggleTheme(bool value) async { darkMode = value; await _persist(); notifyListeners(); }
+  Future<void> setBackgroundNotifications(bool value) async {
+    backgroundNotifications = value;
+    await _persist(); notifyListeners();
+  }
+  Future<void> setAutomaticDirectConnect(bool value) async {
+    automaticDirectConnect = value;
+    if (!value) await p2p.stopAutomatic();
+    await _persist(); notifyListeners();
+  }
+  Future<void> submitFeedback(String text) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return;
+    feedbackMessages.add(clean);
+    await _persist(); notifyListeners();
+  }
+  Future<void> clearMessages() async { messages.clear(); await _persist(); notifyListeners(); }
+  Future<void> clearCallHistory() async { calls.clear(); await _persist(); notifyListeners(); }
+  Future<void> clearCommunityHistory() async { posts.clear(); await _persist(); notifyListeners(); }
   Future<bool> exportEncryptedBackup() async {
     final backup = <String, dynamic>{
       'backupVersion': 1,
@@ -563,9 +615,23 @@ class AppState extends ChangeNotifier {
       _retryingPeers.remove(peer.id);
     }
   }
-  Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups..clear()..add(MeshGroup(id: 'emergency', name: 'Emergency Mesh Group', description: 'Public localized rescue band', members: [deviceId], ownerId: deviceId, adminIds: [deviceId], isPrivate: false)); await _persist(); notifyListeners(); }
+  Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups.clear(); await _persist(); notifyListeners(); }
 
-  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); unawaited(callService.end(notifyPeer: false)); callService.removeListener(notifyListeners); mesh.dispose(); p2p.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
+  Future<void> _playSiren() async {
+    try { await _alertPlayer.stop(); await _alertPlayer.setAsset('assets/audio/siren.wav'); await _alertPlayer.setLoopMode(LoopMode.one); await _alertPlayer.play(); Future<void>.delayed(const Duration(seconds: 12), () => _alertPlayer.stop()); } catch (_) {}
+  }
+  Future<void> _handleCallState() async {
+    notifyListeners();
+    try {
+      if (callService.active && !callService.connected) {
+        if (!_alertPlayer.playing) { await _alertPlayer.setAsset('assets/audio/call_ringtone.wav'); await _alertPlayer.setLoopMode(LoopMode.one); await _alertPlayer.play(); }
+      } else {
+        await _alertPlayer.stop();
+      }
+    } catch (_) {}
+  }
+
+  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); unawaited(_alertPlayer.dispose()); unawaited(callService.end(notifyPeer: false)); callService.removeListener(_handleCallState); mesh.dispose(); p2p.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
 }
 
 extension FirstOrNullState<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }

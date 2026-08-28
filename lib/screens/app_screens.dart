@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -138,7 +139,7 @@ class _MainShellState extends State<MainShell> {
             onPressed: widget.state.restartNetwork,
             icon: Icon(widget.state.networkRunning ? Icons.wifi : Icons.wifi_off, color: widget.state.networkRunning ? Colors.green : null),
           ),
-          if (index != 4) IconButton(tooltip: 'Emergency Center', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: widget.state))), icon: const Icon(Icons.sos_rounded, color: Colors.red)),
+          if (index != 4) IconButton(tooltip: 'Community chat', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: widget.state))), icon: const Icon(Icons.forum_rounded, color: _blue)),
         ],
       ),
       body: IndexedStack(index: index, children: screens),
@@ -194,7 +195,7 @@ class DashboardScreen extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 12),
-        Card(child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [const Icon(Icons.network_check_rounded, color: _cyan, size: 32), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('MESH STRENGTH', style: TextStyle(fontSize: 12, color: Color(0xFF64748B), fontWeight: FontWeight.w800)), Text(state.networkRunning ? 'Strong Signal' : 'Disconnected', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900))])), Text('$online', style: const TextStyle(fontSize: 26, color: _blue, fontWeight: FontWeight.w900))]))),
+        _LiveNodeGraph(state: state),
         const SizedBox(height: 12),
         const Text('Quick Actions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
@@ -210,12 +211,12 @@ class DashboardScreen extends StatelessWidget {
             _Action(Icons.call_rounded, 'Calls', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
             _Action(Icons.people_alt_rounded, 'Discover Devices', () => navigate(2)),
             _Action(Icons.folder_rounded, 'Shared Files', () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('Shared Files')), body: FilesScreen(state: state))))),
-            _Action(Icons.groups_2_rounded, 'Emergency Groups', () => navigate(3)),
-            _Action(Icons.campaign_rounded, 'Community Feed', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state)))),
+            _Action(Icons.groups_2_rounded, 'Groups', () => navigate(3)),
+            _Action(Icons.forum_rounded, 'Community Chat', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state)))),
           ],
         ),
         const SizedBox(height: 10),
-        Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state))), icon: const Icon(Icons.qr_code_2_rounded), label: const Text('QR CONNECT'))), const SizedBox(width: 10), Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EmergencyScreen(state: state))), icon: const Icon(Icons.sos_rounded), label: const Text('SOS PANIC')))]),
+        Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state))), icon: const Icon(Icons.qr_code_2_rounded), label: const Text('QR CONNECT'))), const SizedBox(width: 10), Expanded(child: FilledButton.icon(onPressed: state.restartNetwork, icon: const Icon(Icons.sync_rounded), label: const Text('AUTO CONNECT')))]),
         const SizedBox(height: 18),
         Row(children: [const Expanded(child: Text('Recent Activity', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state))), child: const Text('View all'))]),
         if (state.posts.isEmpty) const _Empty('No recent activity.', 'Nearby mesh updates will appear here.'),
@@ -253,6 +254,56 @@ class _Action extends StatelessWidget {
           ),
         ),
       );
+}
+
+class _LiveNodeGraph extends StatelessWidget {
+  const _LiveNodeGraph({required this.state});
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final onlinePeers = state.peers.where((peer) => peer.online && !peer.blocked).toList();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [const Icon(Icons.hub_rounded, color: _cyan), const SizedBox(width: 8), const Expanded(child: Text('CONNECTED NODES • LIVE', style: TextStyle(fontSize: 12, color: Color(0xFF64748B), fontWeight: FontWeight.w900))), Container(width: 9, height: 9, decoration: BoxDecoration(color: state.networkRunning ? Colors.green : Colors.orange, shape: BoxShape.circle)), const SizedBox(width: 6), Text('${onlinePeers.length + 1}', style: const TextStyle(color: _blue, fontWeight: FontWeight.w900))]),
+          const SizedBox(height: 6),
+          SizedBox(height: 142, width: double.infinity, child: CustomPaint(painter: _NodeGraphPainter(peerCount: onlinePeers.length, active: state.networkRunning), child: onlinePeers.isEmpty ? const Align(alignment: Alignment.bottomCenter, child: Text('Searching for nearby LinkMesh nodes…', style: TextStyle(fontSize: 12, color: Color(0xFF64748B)))) : null)),
+        ]),
+      ),
+    );
+  }
+}
+
+class _NodeGraphPainter extends CustomPainter {
+  const _NodeGraphPainter({required this.peerCount, required this.active});
+  final int peerCount;
+  final bool active;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2 - 3);
+    final line = Paint()..color = const Color(0xFF14B8A6).withValues(alpha: active ? .55 : .2)..strokeWidth = 2;
+    final glow = Paint()..color = const Color(0xFF22D3EE).withValues(alpha: .2)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+    final node = Paint()..color = active ? const Color(0xFF14B8A6) : const Color(0xFF94A3B8);
+    final inactiveNode = Paint()..color = const Color(0xFFCBD5E1);
+    canvas.drawCircle(center, 21, glow);
+    canvas.drawCircle(center, 13, node);
+    final count = math.max(3, math.min(peerCount, 10));
+    for (var i = 0; i < count; i++) {
+      final angle = -math.pi / 2 + (math.pi * 2 * i / count);
+      final radiusX = size.width * .38;
+      final radiusY = size.height * .34;
+      final point = Offset(center.dx + math.cos(angle) * radiusX, center.dy + math.sin(angle) * radiusY);
+      canvas.drawLine(center, point, line);
+      canvas.drawCircle(point, peerCount > i ? 9 : 6, peerCount > i ? node : inactiveNode);
+    }
+    final text = TextPainter(text: const TextSpan(text: 'YOU', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)), textDirection: TextDirection.ltr)..layout();
+    text.paint(canvas, center - Offset(text.width / 2, text.height / 2));
+  }
+
+  @override bool shouldRepaint(covariant _NodeGraphPainter oldDelegate) => oldDelegate.peerCount != peerCount || oldDelegate.active != active;
 }
 
 class NearbyScreen extends StatelessWidget {
@@ -375,6 +426,7 @@ class _ChatScreenState extends State<ChatScreen> {
             appBar: AppBar(
               title: Row(children: [_PeerAvatar(peer: widget.peer, radius: 18), const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(widget.peer.name), Text(widget.peer.online ? 'Online • connected automatically' : 'Offline', style: const TextStyle(fontSize: 11))]))]),
               actions: [
+                IconButton(tooltip: 'Send urgent siren', onPressed: _confirmSiren, icon: const Icon(Icons.notifications_active_rounded, color: Colors.red)),
                 IconButton(onPressed: () => _search(messages), icon: const Icon(Icons.search)),
                 IconButton(onPressed: () => _call(false), icon: const Icon(Icons.call)),
                 IconButton(onPressed: () => _call(true), icon: const Icon(Icons.videocam)),
@@ -481,6 +533,15 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _call(bool video) async {
     final started = await widget.state.startCall(widget.peer, video);
     if (!started && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.state.callError ?? 'Could not start the call. Check permissions and try again.')));
+  }
+
+  void _confirmSiren() {
+    showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+      icon: const Icon(Icons.notifications_active_rounded, color: Colors.red, size: 42),
+      title: Text('Sound siren on ${widget.peer.name}?'),
+      content: const Text('This sends an urgent alarm-priority alert. It may sound while the other phone is silent when LinkMesh has Do Not Disturb access.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () { Navigator.pop(dialogContext); widget.state.sendSiren(peer: widget.peer); }, child: const Text('SEND SIREN'))],
+    ));
   }
 }
 
@@ -917,18 +978,24 @@ class _CommunityScreenState extends State<CommunityScreen> {
   Widget build(BuildContext context) => AnimatedBuilder(
         animation: widget.state,
         builder: (_, __) => Scaffold(
-          appBar: AppBar(title: const Text('Community broadcasts')),
+          appBar: AppBar(
+            title: const Text('Community Chat'),
+            actions: [IconButton(tooltip: 'Community siren', onPressed: _confirmCommunitySiren, icon: const Icon(Icons.notifications_active_rounded, color: Colors.red))],
+          ),
           body: Column(
             children: [
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.all(12),
-                  children: widget.state.posts.map((post) => Card(child: ListTile(leading: Icon(post.emergency ? Icons.warning : Icons.campaign, color: post.emergency ? Colors.red : _blue), title: Text(post.author), subtitle: Text(post.text)))).toList(),
+                  children: widget.state.posts.reversed.map((post) => Align(
+                    alignment: post.author == widget.state.username ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Container(constraints: const BoxConstraints(maxWidth: 310), margin: const EdgeInsets.symmetric(vertical: 4), padding: const EdgeInsets.fromLTRB(12, 8, 10, 6), decoration: BoxDecoration(color: post.emergency ? const Color(0xFFFFE4E6) : post.author == widget.state.username ? const Color(0xFFD9FDD3) : Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(14)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(post.author, style: TextStyle(color: post.emergency ? Colors.red : _blue, fontWeight: FontWeight.bold, fontSize: 12)), Text(post.text), Align(alignment: Alignment.centerRight, child: Text(_clock(post.createdAt), style: Theme.of(context).textTheme.labelSmall))])),
+                  )).toList(),
                 ),
               ),
               _Composer(
                 controller: input,
-                hint: 'Broadcast nearby update',
+                hint: 'Message everyone nearby',
                 send: () {
                   final text = input.text;
                   input.clear();
@@ -939,6 +1006,15 @@ class _CommunityScreenState extends State<CommunityScreen> {
           ),
         ),
       );
+
+  void _confirmCommunitySiren() {
+    showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+      icon: const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 44),
+      title: const Text('Broadcast community siren?'),
+      content: const Text('Every connected LinkMesh phone will receive an urgent siren alert.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () { Navigator.pop(dialogContext); widget.state.sendSiren(); }, child: const Text('BROADCAST SIREN'))],
+    ));
+  }
 }
 
 class EmergencyScreen extends StatelessWidget {
@@ -991,15 +1067,19 @@ class SettingsScreen extends StatelessWidget {
             const _SettingsHeader('My Profile'),
             Card(
               child: ListTile(
-                leading: GestureDetector(onTap: state.pickProfilePhoto, child: _ProfileAvatar(path: state.profilePhotoPath, name: state.username, radius: 25)),
+                leading: _ProfileAvatar(path: state.profilePhotoPath, name: state.username, radius: 27),
                 title: Text(state.username),
-                subtitle: Text('Tap photo or edit name • Node ${state.deviceId.substring(0, 8)}'),
-                trailing: IconButton(icon: const Icon(Icons.edit), onPressed: () => _edit(context)),
+                subtitle: Text('Edit name and profile picture\nNode ${state.deviceId.substring(0, 8)}'),
+                isThreeLine: true,
+                trailing: const Icon(Icons.edit_rounded, color: _blue),
+                onTap: () => _edit(context),
               ),
             ),
-            const _SettingsHeader('ADVANCED ROUTING PARAMETERS'),
+            const _SettingsHeader('Connection & background'),
             Card(child: ListTile(leading: Icon(state.networkRunning ? Icons.hub : Icons.link_off, color: state.networkRunning ? Colors.green : Colors.orange), title: const Text('Automatic nearby connection'), subtitle: Text(state.networkRunning ? 'On • same Wi-Fi and hotspot devices connect automatically' : 'Paused • turn on Local mesh network below'), trailing: state.networkRunning ? const Icon(Icons.check_circle, color: Colors.green) : null)),
-            SwitchListTile(value: state.darkMode, onChanged: state.toggleTheme, secondary: const Icon(Icons.dark_mode), title: const Text('Dark mode')),
+            SwitchListTile(value: state.backgroundNotifications, onChanged: state.setBackgroundNotifications, secondary: const Icon(Icons.notifications_active_outlined), title: const Text('Background notifications'), subtitle: const Text('Keep discovery, call ringing and message alerts active when the app is minimized')),
+            SwitchListTile(value: state.automaticDirectConnect, onChanged: state.setAutomaticDirectConnect, secondary: const Icon(Icons.sync_alt_rounded), title: const Text('Automatic Wi-Fi Direct fallback'), subtitle: const Text('After one-time Android permission, find LinkMesh phones without manual pairing')),
+            ListTile(leading: Icon(state.darkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded), title: const Text('App theme'), subtitle: Text(state.darkMode ? 'Dark' : 'Light'), trailing: const Icon(Icons.chevron_right), onTap: () => _chooseTheme(context)),
             ListTile(leading: const Icon(Icons.lock), title: const Text('Private mesh code'), subtitle: const Text('AES-256 encrypted trusted network'), trailing: const Icon(Icons.edit), onTap: () => _editMeshCode(context)),
             ListTile(leading: const Icon(Icons.qr_code_2), title: const Text('QR secure pairing'), subtitle: const Text('Connect a trusted phone without typing the key'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state)))),
             ListTile(leading: const Icon(Icons.backup), title: const Text('Create encrypted backup'), subtitle: const Text('Protected by the current private mesh key'), onTap: () => _backup(context)),
@@ -1012,14 +1092,18 @@ class SettingsScreen extends StatelessWidget {
               subtitle: Text(state.networkRunning ? 'Discovery active' : 'Discovery stopped'),
             ),
             const _SettingsHeader('Chats, calls & data'),
-            ListTile(leading: const Icon(Icons.history), title: const Text('Call history'), subtitle: Text('${state.calls.length} attempts'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
+            ListTile(leading: const Icon(Icons.history), title: const Text('Call history'), subtitle: Text('${state.calls.length} calls • tap to view'), trailing: IconButton(tooltip: 'Clear call history', icon: const Icon(Icons.delete_sweep_outlined), onPressed: () => _confirmClear(context, 'Clear call history?', 'All call records on this phone will be removed.', state.clearCallHistory)), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
+            ListTile(leading: const Icon(Icons.chat_bubble_outline), title: const Text('Clear message history'), subtitle: Text('${state.messages.length} personal and group messages'), trailing: const Icon(Icons.delete_outline), onTap: () => _confirmClear(context, 'Clear all messages?', 'Personal and group message history on this phone will be removed.', state.clearMessages)),
+            ListTile(leading: const Icon(Icons.forum_outlined), title: const Text('Clear community chat'), subtitle: Text('${state.posts.length} community messages'), trailing: const Icon(Icons.delete_outline), onTap: () => _confirmClear(context, 'Clear community chat?', 'Community messages stored on this phone will be removed.', state.clearCommunityHistory)),
             if (Platform.isAndroid) ListTile(leading: const Icon(Icons.device_hub), title: const Text('Bluetooth & Wi-Fi Direct'), subtitle: Text(state.p2p.status), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => P2pTransportScreen(state: state)))),
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
-            ListTile(leading: const Icon(Icons.notifications_active_outlined), title: const Text('Background notifications'), subtitle: const Text('Calls and messages remain available while minimized'), trailing: const Icon(Icons.open_in_new), onTap: state.openSystemSettings),
+            ListTile(leading: const Icon(Icons.volume_up_rounded, color: Colors.red), title: const Text('Allow urgent siren in silent mode'), subtitle: const Text('Open Android notification settings and allow LinkMesh alarms/Do Not Disturb access'), trailing: const Icon(Icons.open_in_new), onTap: state.openSystemSettings),
+            const _SettingsHeader('Help & feedback'),
+            ListTile(leading: const Icon(Icons.support_agent_rounded, color: _blue), title: const Text('Complaint & review chat'), subtitle: const Text('Send feedback in a simple chatbox'), trailing: const Icon(Icons.chevron_right), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FeedbackChatScreen(state: state)))),
             const _SettingsHeader('DEVELOPER INFORMATION'),
-            ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Clear local messages and history'), onTap: state.clearLocalData),
+            ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Reset all local app data'), onTap: () => _confirmClear(context, 'Reset LinkMesh data?', 'Peers, messages, groups, community posts and calls will be removed from this phone.', state.clearLocalData)),
             const ListTile(leading: Icon(Icons.code_rounded), title: Text('App Developed by nomi Developer'), subtitle: Text('nomi developer')),
-            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.2 ACTIVE')),
+            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.3 ACTIVE')),
             ],
           ),
         ),
@@ -1031,8 +1115,14 @@ class SettingsScreen extends StatelessWidget {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Edit profile'),
-        content: TextField(controller: controller),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          _ProfileAvatar(path: state.profilePhotoPath, name: state.username, radius: 45),
+          TextButton.icon(onPressed: () async { await state.pickProfilePhoto(); if (context.mounted) Navigator.pop(context); }, icon: const Icon(Icons.photo_camera_rounded), label: const Text('Change profile picture')),
+          const SizedBox(height: 10),
+          TextField(controller: controller, decoration: const InputDecoration(labelText: 'Profile name', prefixIcon: Icon(Icons.person_outline))),
+        ]),
         actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           FilledButton(
             onPressed: () {
               state.updateProfile(controller.text);
@@ -1043,6 +1133,18 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     ).whenComplete(controller.dispose);
+  }
+
+  void _chooseTheme(BuildContext context) {
+    showModalBottomSheet<void>(context: context, builder: (sheetContext) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const ListTile(title: Text('Choose app theme', style: TextStyle(fontWeight: FontWeight.bold))),
+      ListTile(leading: const Icon(Icons.light_mode_rounded), title: const Text('Light theme'), trailing: Icon(state.darkMode ? Icons.radio_button_unchecked : Icons.radio_button_checked, color: _blue), onTap: () { state.toggleTheme(false); Navigator.pop(sheetContext); }),
+      ListTile(leading: const Icon(Icons.dark_mode_rounded), title: const Text('Dark theme'), trailing: Icon(state.darkMode ? Icons.radio_button_checked : Icons.radio_button_unchecked, color: _blue), onTap: () { state.toggleTheme(true); Navigator.pop(sheetContext); }),
+    ])));
+  }
+
+  void _confirmClear(BuildContext context, String title, String detail, Future<void> Function() action) {
+    showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(title: Text(title), content: Text(detail), actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () async { Navigator.pop(dialogContext); await action(); }, child: const Text('Clear'))]));
   }
 
   void _editMeshCode(BuildContext context) {
@@ -1069,6 +1171,42 @@ class SettingsScreen extends StatelessWidget {
     final ok = await state.restoreEncryptedBackup();
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(ok ? 'Backup restored successfully.' : 'Restore failed or was cancelled.')));
   }
+}
+
+class FeedbackChatScreen extends StatefulWidget {
+  const FeedbackChatScreen({super.key, required this.state});
+  final AppState state;
+  @override State<FeedbackChatScreen> createState() => _FeedbackChatScreenState();
+}
+
+class _FeedbackChatScreenState extends State<FeedbackChatScreen> {
+  final input = TextEditingController();
+  @override void dispose() { input.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.state,
+    builder: (_, __) => Scaffold(
+      appBar: AppBar(title: const Text('Complaint & Review')),
+      body: Column(children: [
+        const Material(color: Color(0xFFE0F2FE), child: ListTile(leading: CircleAvatar(child: Icon(Icons.support_agent_rounded)), title: Text('LinkMesh Support'), subtitle: Text('Describe an issue or leave a review below. Feedback is saved securely on this phone for support export.'))),
+        Expanded(child: ListView(padding: const EdgeInsets.all(12), children: [
+          const Align(alignment: Alignment.centerLeft, child: Card(child: Padding(padding: EdgeInsets.all(12), child: Text('Hello! How can we improve LinkMesh for you?')))),
+          ...widget.state.feedbackMessages.map((message) => Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 310),
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFFD9FDD3), borderRadius: BorderRadius.circular(14)),
+              child: Text(message),
+            ),
+          )),
+        ])),
+        _Composer(controller: input, hint: 'Write complaint or review', send: () { final text = input.text; input.clear(); widget.state.submitFeedback(text); }),
+      ]),
+    ),
+  );
 }
 
 class QrPairingScreen extends StatelessWidget {

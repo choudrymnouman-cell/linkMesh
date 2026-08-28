@@ -9,7 +9,7 @@ class LinkMeshBootstrap extends StatefulWidget { const LinkMeshBootstrap({super.
 class _LinkMeshBootstrapState extends State<LinkMeshBootstrap> with WidgetsBindingObserver {
   final state = AppState();
   @override void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); state.initialize(); }
-  @override void didChangeAppLifecycleState(AppLifecycleState lifecycle) { if (!state.initialized) return; if (lifecycle == AppLifecycleState.paused) { state.enterBackground(); } else if (lifecycle == AppLifecycleState.resumed) { state.resumeFromBackground(); } }
+  @override void didChangeAppLifecycleState(AppLifecycleState lifecycle) { if (!state.initialized) return; if (lifecycle == AppLifecycleState.paused || lifecycle == AppLifecycleState.detached) { state.enterBackground(); } else if (lifecycle == AppLifecycleState.resumed) { state.resumeFromBackground(); } }
   @override void dispose() { WidgetsBinding.instance.removeObserver(this); state.dispose(); super.dispose(); }
   @override Widget build(BuildContext context) => AnimatedBuilder(animation: state, builder: (_, __) => MaterialApp(
     debugShowCheckedModeBanner: false, title: 'LinkMesh', themeMode: state.darkMode ? ThemeMode.dark : ThemeMode.light,

@@ -15,11 +15,12 @@ class BackgroundMeshService {
     );
   }
 
-  Future<void> start({required String id, required String name, required String meshCode, String avatarHash = ''}) async {
+  Future<void> start({required String id, required String name, required String meshCode, String avatarHash = '', bool alertsEnabled = true}) async {
     await FlutterForegroundTask.saveData(key: 'linkmesh_id', value: id);
     await FlutterForegroundTask.saveData(key: 'linkmesh_name', value: name);
     await FlutterForegroundTask.saveData(key: 'linkmesh_code', value: meshCode);
     await FlutterForegroundTask.saveData(key: 'linkmesh_avatar_hash', value: avatarHash);
+    await FlutterForegroundTask.saveData(key: 'linkmesh_alerts_enabled', value: alertsEnabled);
     if (await FlutterForegroundTask.checkNotificationPermission() != NotificationPermission.granted) await FlutterForegroundTask.requestNotificationPermission();
     if (await FlutterForegroundTask.isRunningService) return;
     await FlutterForegroundTask.startService(serviceId: 40444, notificationTitle: 'LinkMesh is active', notificationText: 'Listening for encrypted nearby messages', notificationInitialRoute: '/', callback: backgroundMeshCallback);
@@ -42,6 +43,7 @@ class _BackgroundMeshHandler extends TaskHandler {
   final LocalMeshService _mesh = LocalMeshService();
   final NotificationService _notifications = NotificationService();
   StreamSubscription<MeshPacket>? _subscription;
+  bool _alertsEnabled = true;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -49,6 +51,7 @@ class _BackgroundMeshHandler extends TaskHandler {
     final name = await FlutterForegroundTask.getData<String>(key: 'linkmesh_name');
     final code = await FlutterForegroundTask.getData<String>(key: 'linkmesh_code');
     final avatarHash = await FlutterForegroundTask.getData<String>(key: 'linkmesh_avatar_hash') ?? '';
+    _alertsEnabled = await FlutterForegroundTask.getData<bool>(key: 'linkmesh_alerts_enabled') ?? true;
     if (id == null || name == null || code == null) return;
     await _notifications.initialize(requestPermission: false);
     _mesh.setPresenceData({'avatarHash': avatarHash});
@@ -76,10 +79,16 @@ class _BackgroundMeshHandler extends TaskHandler {
       final host = packet.payload['host']?.toString() ?? '';
       if (host.isNotEmpty) await _mesh.sendToHost(host, 'pair_accept', const {});
     }
+    if (!_alertsEnabled) {
+      await FlutterForegroundTask.updateService(notificationTitle: 'LinkMesh is active', notificationText: 'Background mesh connected • alerts muted');
+      return;
+    }
     if (packet.type == 'call_signal' && packet.payload['kind'] == 'offer') {
       await _notifications.showIncomingCall(packet.senderName, video: packet.payload['video'] == true);
     } else if (packet.type == 'sos') {
       await _notifications.showSos(packet.senderName, packet.payload['text']?.toString() ?? 'Emergency assistance requested');
+    } else if (packet.type == 'siren') {
+      await _notifications.showSiren(packet.senderName, packet.payload['text']?.toString() ?? 'Urgent siren alert');
     } else if (packet.type == 'message') {
       await _notifications.showMessage(packet.senderName, packet.payload['text']?.toString() ?? 'New encrypted message');
     } else if (packet.type == 'group_message') {

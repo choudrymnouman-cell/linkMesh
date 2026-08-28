@@ -1,7 +1,7 @@
 name: linkmesh_offline_chat
 description: Flutter recreation of the supplied offline mesh chatting APK.
 publish_to: 'none'
-version: 4.2.0+15
+version: 4.3.0+16
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -43,3 +43,5 @@ flutter:
     - assets/images/linkmesh_icon.png
     - assets/images/mesh_logo.jpg
     - assets/images/img_welcome_illustration.jpg
+    - assets/audio/call_ringtone.wav
+    - assets/audio/siren.wav
