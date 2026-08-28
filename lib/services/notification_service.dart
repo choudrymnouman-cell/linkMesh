@@ -40,13 +40,13 @@ class NotificationService {
         DateTime.now().millisecondsSinceEpoch.remainder(1 << 31),
         'SOS from $sender',
         details,
-        const NotificationDetails(android: AndroidNotificationDetails('linkmesh_siren_v2', 'Urgent LinkMesh sirens', channelDescription: 'Urgent sirens from trusted LinkMesh devices', importance: Importance.max, priority: Priority.max, icon: 'ic_notification', enableVibration: true, playSound: true, sound: RawResourceAndroidNotificationSound('linkmesh_siren'), category: AndroidNotificationCategory.alarm, fullScreenIntent: true, bypassDnd: true, audioAttributesUsage: AudioAttributesUsage.alarm)),
+        const NotificationDetails(android: AndroidNotificationDetails('linkmesh_siren_v2', 'Urgent LinkMesh sirens', channelDescription: 'Urgent sirens from trusted LinkMesh devices', importance: Importance.max, priority: Priority.max, icon: 'ic_notification', enableVibration: true, playSound: true, sound: RawResourceAndroidNotificationSound('linkmesh_siren'), category: AndroidNotificationCategory.alarm, fullScreenIntent: true, audioAttributesUsage: AudioAttributesUsage.alarm)),
       );
 
   Future<void> showSiren(String sender, String details) => _plugin.show(
         DateTime.now().millisecondsSinceEpoch.remainder(1 << 31),
         'URGENT SIREN • $sender',
         details,
-        const NotificationDetails(android: AndroidNotificationDetails('linkmesh_siren_v2', 'Urgent LinkMesh sirens', channelDescription: 'Urgent sirens from trusted LinkMesh devices', importance: Importance.max, priority: Priority.max, icon: 'ic_notification', enableVibration: true, playSound: true, sound: RawResourceAndroidNotificationSound('linkmesh_siren'), category: AndroidNotificationCategory.alarm, fullScreenIntent: true, bypassDnd: true, audioAttributesUsage: AudioAttributesUsage.alarm)),
+        const NotificationDetails(android: AndroidNotificationDetails('linkmesh_siren_v2', 'Urgent LinkMesh sirens', channelDescription: 'Urgent sirens from trusted LinkMesh devices', importance: Importance.max, priority: Priority.max, icon: 'ic_notification', enableVibration: true, playSound: true, sound: RawResourceAndroidNotificationSound('linkmesh_siren'), category: AndroidNotificationCategory.alarm, fullScreenIntent: true, audioAttributesUsage: AudioAttributesUsage.alarm)),
       );
 }

@@ -1138,8 +1138,8 @@ class SettingsScreen extends StatelessWidget {
   void _chooseTheme(BuildContext context) {
     showModalBottomSheet<void>(context: context, builder: (sheetContext) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
       const ListTile(title: Text('Choose app theme', style: TextStyle(fontWeight: FontWeight.bold))),
-      RadioListTile<bool>(value: false, groupValue: state.darkMode, title: const Text('Light theme'), secondary: const Icon(Icons.light_mode_rounded), onChanged: (_) { state.toggleTheme(false); Navigator.pop(sheetContext); }),
-      RadioListTile<bool>(value: true, groupValue: state.darkMode, title: const Text('Dark theme'), secondary: const Icon(Icons.dark_mode_rounded), onChanged: (_) { state.toggleTheme(true); Navigator.pop(sheetContext); }),
+      ListTile(leading: const Icon(Icons.light_mode_rounded), title: const Text('Light theme'), trailing: Icon(state.darkMode ? Icons.radio_button_unchecked : Icons.radio_button_checked, color: _blue), onTap: () { state.toggleTheme(false); Navigator.pop(sheetContext); }),
+      ListTile(leading: const Icon(Icons.dark_mode_rounded), title: const Text('Dark theme'), trailing: Icon(state.darkMode ? Icons.radio_button_checked : Icons.radio_button_unchecked, color: _blue), onTap: () { state.toggleTheme(true); Navigator.pop(sheetContext); }),
     ])));
   }
 
@@ -1192,7 +1192,16 @@ class _FeedbackChatScreenState extends State<FeedbackChatScreen> {
         const Material(color: Color(0xFFE0F2FE), child: ListTile(leading: CircleAvatar(child: Icon(Icons.support_agent_rounded)), title: Text('LinkMesh Support'), subtitle: Text('Describe an issue or leave a review below. Feedback is saved securely on this phone for support export.'))),
         Expanded(child: ListView(padding: const EdgeInsets.all(12), children: [
           const Align(alignment: Alignment.centerLeft, child: Card(child: Padding(padding: EdgeInsets.all(12), child: Text('Hello! How can we improve LinkMesh for you?')))),
-          ...widget.state.feedbackMessages.map((message) => Align(alignment: Alignment.centerRight, child: Container(constraints: const BoxConstraints(maxWidth: 310), margin: const EdgeInsets.symmetric(vertical: 4), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: const Color(0xFFD9FDD3), borderRadius: BorderRadius.circular(14)), child: Text(message))),
+          ...widget.state.feedbackMessages.map((message) => Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 310),
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFFD9FDD3), borderRadius: BorderRadius.circular(14)),
+              child: Text(message),
+            ),
+          )),
         ])),
         _Composer(controller: input, hint: 'Write complaint or review', send: () { final text = input.text; input.clear(); widget.state.submitFeedback(text); }),
       ]),
