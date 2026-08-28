@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_p2p_connection/flutter_p2p_connection.dart';
 
@@ -11,6 +12,10 @@ class P2pTransportService extends ChangeNotifier {
   bool initialized = false;
   bool hosting = false;
   bool scanning = false;
+  bool connected = false;
+  bool automatic = false;
+  Timer? _roleTimer;
+  bool _connecting = false;
   String status = 'Wi-Fi Direct idle';
 
   Future<void> initialize() async {
@@ -18,8 +23,8 @@ class P2pTransportService extends ChangeNotifier {
     if (!Platform.isAndroid) { status = 'Wi-Fi Direct is available on Android'; initialized = true; notifyListeners(); return; }
     await host.initialize();
     await client.initialize();
-    _subscriptions.add(host.streamHotspotState().listen((state) { status = 'Host: $state'; notifyListeners(); }));
-    _subscriptions.add(client.streamHotspotState().listen((state) { status = 'Client: $state'; notifyListeners(); }));
+    _subscriptions.add(host.streamHotspotState().listen((state) { status = 'Host: $state'; connected = state.toString().toLowerCase().contains('connected'); notifyListeners(); }));
+    _subscriptions.add(client.streamHotspotState().listen((state) { status = 'Client: $state'; connected = state.toString().toLowerCase().contains('connected'); notifyListeners(); }));
     initialized = true;
   }
 
@@ -48,9 +53,53 @@ class P2pTransportService extends ChangeNotifier {
   }
 
   Future<void> connect(BleDiscoveredDevice device) async {
+    if (_connecting) return;
+    _connecting = true;
     await client.stopScan(); scanning = false; status = 'Connecting…'; notifyListeners();
-    await client.connectWithDevice(device, timeout: const Duration(seconds: 30));
-    status = 'Connected to Wi-Fi Direct group'; notifyListeners();
+    try {
+      await client.connectWithDevice(device, timeout: const Duration(seconds: 30));
+      connected = true; status = 'Connected automatically with Wi-Fi Direct'; notifyListeners();
+    } finally { _connecting = false; }
+  }
+
+  Future<void> startAutomatic(String deviceId) async {
+    if (automatic || connected || hosting) return;
+    automatic = true;
+    await _runAutomaticRole(deviceId, 0);
+  }
+
+  Future<void> _runAutomaticRole(String deviceId, int cycle) async {
+    if (!automatic || connected) return;
+    if (!await prepare()) { automatic = false; return; }
+    final preferHost = (deviceId.hashCode + cycle).isEven;
+    if (preferHost) {
+      await Future<void>.delayed(Duration(milliseconds: 600 + Random().nextInt(1400)));
+      if (!automatic || connected) return;
+      try { await createGroup(); } catch (_) { hosting = false; }
+    } else {
+      try {
+        discoveredHosts.clear(); scanning = true; status = 'Finding LinkMesh phones automatically…'; notifyListeners();
+        await client.startScan((devices) {
+          discoveredHosts..clear()..addAll(devices);
+          if (automatic && devices.isNotEmpty && !connected && !_connecting) unawaited(connect(devices.first));
+          notifyListeners();
+        });
+      } catch (_) { scanning = false; }
+    }
+    _roleTimer?.cancel();
+    _roleTimer = Timer(const Duration(seconds: 18), () async {
+      if (!automatic || connected) return;
+      try { await client.stopScan(); } catch (_) {}
+      try { if (hosting) await host.removeGroup(); } catch (_) {}
+      hosting = false; scanning = false;
+      await _runAutomaticRole(deviceId, cycle + 1);
+    });
+  }
+
+  Future<void> stopAutomatic() async {
+    automatic = false;
+    _roleTimer?.cancel(); _roleTimer = null;
+    try { await client.stopScan(); } catch (_) {}
   }
 
   Future<void> disconnect() async {
@@ -60,5 +109,5 @@ class P2pTransportService extends ChangeNotifier {
   }
 
   @override
-  void dispose() { for (final subscription in _subscriptions) { unawaited(subscription.cancel()); } if (Platform.isAndroid) { unawaited(host.dispose()); unawaited(client.dispose()); } super.dispose(); }
+  void dispose() { _roleTimer?.cancel(); for (final subscription in _subscriptions) { unawaited(subscription.cancel()); } if (Platform.isAndroid) { unawaited(host.dispose()); unawaited(client.dispose()); } super.dispose(); }
 }
