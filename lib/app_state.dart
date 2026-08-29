@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -234,7 +235,11 @@ class AppState extends ChangeNotifier {
   }
   Future<void> restartNetwork() async { await mesh.stop(); networkRunning = false; notifyListeners(); await startNetwork(); }
   Future<void> stopNetwork() async { await mesh.stop(); networkRunning = false; for (final p in peers) { p.online = false; } await _persist(); notifyListeners(); }
-  Future<void> enterBackground() async { if (!onboarded || !networkRunning || callService.active) return; await stopNetwork(); await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode, avatarHash: profilePhotoHash, alertsEnabled: backgroundNotifications); }
+  Future<void> enterBackground() async {
+    if (!onboarded || callService.active) return;
+    if (networkRunning) await stopNetwork();
+    await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode, avatarHash: profilePhotoHash, alertsEnabled: backgroundNotifications);
+  }
   Future<void> resumeFromBackground() async { await backgroundMesh.stop(); for (final packet in await backgroundMesh.drainPackets()) { _onPacket(packet); } if (onboarded && !networkRunning) await startNetwork(); }
   Future<void> createP2pGroup() async { await p2p.createGroup(); await restartNetwork(); }
   Future<void> connectP2pHost(dynamic device) async { await p2p.connect(device); await restartNetwork(); }
@@ -585,6 +590,11 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
   Future<bool> openSystemSettings() => openAppSettings();
+  Future<void> openSirenAccessSettings() async {
+    if (!Platform.isAndroid) { await openAppSettings(); return; }
+    try { await const MethodChannel('linkmesh/system').invokeMethod<void>('openNotificationPolicySettings'); }
+    on PlatformException { await openAppSettings(); }
+  }
   Future<bool> retryMessage(ChatMessage message) async {
     if (!message.mine || message.status != DeliveryStatus.failed) return false;
     final peer = peers.where((p) => p.id == message.peerId).firstOrNull;

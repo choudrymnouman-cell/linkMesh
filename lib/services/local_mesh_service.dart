@@ -100,6 +100,12 @@ class LocalMeshService {
     if (running) unawaited(broadcastPresence());
   }
 
+  Future<void> refreshNetwork() async {
+    if (!running) return;
+    await _refreshBroadcastAddresses();
+    await broadcastPresence();
+  }
+
   Future<void> broadcastPresence() => broadcastPacket('presence', {'port': messagePort, ..._presenceData});
 
   Future<void> _refreshBroadcastAddresses() async {

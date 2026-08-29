@@ -100,7 +100,10 @@ class _BackgroundMeshHandler extends TaskHandler {
   }
 
   @override
-  void onRepeatEvent(DateTime timestamp) { FlutterForegroundTask.updateService(notificationTitle: 'LinkMesh is active', notificationText: 'Encrypted mesh listening in background'); }
+  void onRepeatEvent(DateTime timestamp) {
+    unawaited(_mesh.refreshNetwork());
+    FlutterForegroundTask.updateService(notificationTitle: 'LinkMesh is active', notificationText: 'Encrypted mesh listening in background');
+  }
 
   @override
   Future<void> onDestroy(DateTime timestamp) async { await _subscription?.cancel(); await _mesh.dispose(); }

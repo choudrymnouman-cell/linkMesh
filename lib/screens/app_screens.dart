@@ -121,6 +121,7 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
+    final connectedDevices = widget.state.peers.where((peer) => peer.online && !peer.blocked).length;
     final screens = <Widget>[
       DashboardScreen(state: widget.state, navigate: (value) => setState(() => index = value)),
       ChatsScreen(state: widget.state),
@@ -134,10 +135,12 @@ class _MainShellState extends State<MainShell> {
         title: Row(children: [ClipRRect(borderRadius: BorderRadius.circular(9), child: Image.asset('assets/images/mesh_logo.jpg', width: 36, height: 36)), const SizedBox(width: 10), Expanded(child: Text(titles[index], style: const TextStyle(fontWeight: FontWeight.w900)))]),
         actions: [
           IconButton(tooltip: 'QR pairing', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: widget.state))), icon: const Icon(Icons.qr_code_2_rounded)),
-          IconButton(
-            tooltip: 'Restart mesh network',
-            onPressed: widget.state.restartNetwork,
-            icon: Icon(widget.state.networkRunning ? Icons.wifi : Icons.wifi_off, color: widget.state.networkRunning ? Colors.green : null),
+          Semantics(
+            label: '$connectedDevices connected devices',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Center(child: Text('$connectedDevices', style: const TextStyle(color: _blue, fontSize: 18, fontWeight: FontWeight.w900))),
+            ),
           ),
           if (index != 4) IconButton(tooltip: 'Community chat', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: widget.state))), icon: const Icon(Icons.forum_rounded, color: _blue)),
         ],
@@ -165,25 +168,10 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final online = state.peers.where((peer) => peer.online && !peer.blocked).length;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF071A3D), Color(0xFF0F3B67)]), borderRadius: BorderRadius.circular(20)),
-          child: Row(children: [
-            ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.asset('assets/images/mesh_logo.jpg', width: 72, height: 72)),
-            const SizedBox(width: 16),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('MESH NETWORK', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              Text(state.networkRunning ? 'ACTIVE P2P LINK' : 'RELAY ACCESS ONLY', style: const TextStyle(color: Color(0xFF5EEAD4), fontSize: 18, fontWeight: FontWeight.w900)),
-              const SizedBox(height: 3),
-              Text(state.networkRunning ? '$online Devices Online' : '0 Devices Online (Offline)', style: const TextStyle(color: Colors.white70)),
-            ])),
-          ]),
-        ),
+        _LiveNodeGraph(state: state),
         if (state.networkError != null)
           Card(
             color: Theme.of(context).colorScheme.errorContainer,
@@ -194,8 +182,6 @@ class DashboardScreen extends StatelessWidget {
               trailing: TextButton(onPressed: state.openSystemSettings, child: const Text('Settings')),
             ),
           ),
-        const SizedBox(height: 12),
-        _LiveNodeGraph(state: state),
         const SizedBox(height: 12),
         const Text('Quick Actions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
@@ -215,8 +201,6 @@ class DashboardScreen extends StatelessWidget {
             _Action(Icons.forum_rounded, 'Community Chat', () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state)))),
           ],
         ),
-        const SizedBox(height: 10),
-        Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => QrPairingScreen(state: state))), icon: const Icon(Icons.qr_code_2_rounded), label: const Text('QR CONNECT'))), const SizedBox(width: 10), Expanded(child: FilledButton.icon(onPressed: state.restartNetwork, icon: const Icon(Icons.sync_rounded), label: const Text('AUTO CONNECT')))]),
         const SizedBox(height: 18),
         Row(children: [const Expanded(child: Text('Recent Activity', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: state))), child: const Text('View all'))]),
         if (state.posts.isEmpty) const _Empty('No recent activity.', 'Nearby mesh updates will appear here.'),
@@ -264,12 +248,13 @@ class _LiveNodeGraph extends StatelessWidget {
   Widget build(BuildContext context) {
     final onlinePeers = state.peers.where((peer) => peer.online && !peer.blocked).toList();
     return Card(
+      color: const Color(0xFF071A3D),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [const Icon(Icons.hub_rounded, color: _cyan), const SizedBox(width: 8), const Expanded(child: Text('CONNECTED NODES • LIVE', style: TextStyle(fontSize: 12, color: Color(0xFF64748B), fontWeight: FontWeight.w900))), Container(width: 9, height: 9, decoration: BoxDecoration(color: state.networkRunning ? Colors.green : Colors.orange, shape: BoxShape.circle)), const SizedBox(width: 6), Text('${onlinePeers.length + 1}', style: const TextStyle(color: _blue, fontWeight: FontWeight.w900))]),
-          const SizedBox(height: 6),
-          SizedBox(height: 142, width: double.infinity, child: CustomPaint(painter: _NodeGraphPainter(peerCount: onlinePeers.length, active: state.networkRunning), child: onlinePeers.isEmpty ? const Align(alignment: Alignment.bottomCenter, child: Text('Searching for nearby LinkMesh nodes…', style: TextStyle(fontSize: 12, color: Color(0xFF64748B)))) : null)),
+          Row(children: [const Icon(Icons.hub_rounded, color: _cyan), const SizedBox(width: 8), const Expanded(child: Text('CONNECTED NODES • LIVE', style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w900))), Container(width: 9, height: 9, decoration: BoxDecoration(color: state.networkRunning ? Colors.greenAccent : Colors.orange, shape: BoxShape.circle)), const SizedBox(width: 7), Text('${onlinePeers.length}', style: const TextStyle(color: _cyan, fontSize: 18, fontWeight: FontWeight.w900))]),
+          const SizedBox(height: 8),
+          SizedBox(height: 190, width: double.infinity, child: CustomPaint(painter: _NodeGraphPainter(peerCount: onlinePeers.length, active: state.networkRunning), child: onlinePeers.isEmpty ? const Align(alignment: Alignment.bottomCenter, child: Text('Searching automatically for LinkMesh devices…', style: TextStyle(fontSize: 12, color: Colors.white60))) : null)),
         ]),
       ),
     );
@@ -287,17 +272,16 @@ class _NodeGraphPainter extends CustomPainter {
     final line = Paint()..color = const Color(0xFF14B8A6).withValues(alpha: active ? .55 : .2)..strokeWidth = 2;
     final glow = Paint()..color = const Color(0xFF22D3EE).withValues(alpha: .2)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
     final node = Paint()..color = active ? const Color(0xFF14B8A6) : const Color(0xFF94A3B8);
-    final inactiveNode = Paint()..color = const Color(0xFFCBD5E1);
     canvas.drawCircle(center, 21, glow);
     canvas.drawCircle(center, 13, node);
-    final count = math.max(3, math.min(peerCount, 10));
+    final count = math.min(peerCount, 10);
     for (var i = 0; i < count; i++) {
       final angle = -math.pi / 2 + (math.pi * 2 * i / count);
       final radiusX = size.width * .38;
       final radiusY = size.height * .34;
       final point = Offset(center.dx + math.cos(angle) * radiusX, center.dy + math.sin(angle) * radiusY);
       canvas.drawLine(center, point, line);
-      canvas.drawCircle(point, peerCount > i ? 9 : 6, peerCount > i ? node : inactiveNode);
+      canvas.drawCircle(point, 9, node);
     }
     final text = TextPainter(text: const TextSpan(text: 'YOU', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)), textDirection: TextDirection.ltr)..layout();
     text.paint(canvas, center - Offset(text.width / 2, text.height / 2));
@@ -1097,13 +1081,13 @@ class SettingsScreen extends StatelessWidget {
             ListTile(leading: const Icon(Icons.forum_outlined), title: const Text('Clear community chat'), subtitle: Text('${state.posts.length} community messages'), trailing: const Icon(Icons.delete_outline), onTap: () => _confirmClear(context, 'Clear community chat?', 'Community messages stored on this phone will be removed.', state.clearCommunityHistory)),
             if (Platform.isAndroid) ListTile(leading: const Icon(Icons.device_hub), title: const Text('Bluetooth & Wi-Fi Direct'), subtitle: Text(state.p2p.status), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => P2pTransportScreen(state: state)))),
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
-            ListTile(leading: const Icon(Icons.volume_up_rounded, color: Colors.red), title: const Text('Allow urgent siren in silent mode'), subtitle: const Text('Open Android notification settings and allow LinkMesh alarms/Do Not Disturb access'), trailing: const Icon(Icons.open_in_new), onTap: state.openSystemSettings),
+            ListTile(leading: const Icon(Icons.volume_up_rounded, color: Colors.red), title: const Text('Allow urgent siren in silent mode'), subtitle: const Text('Grant one-time Android Do Not Disturb access for trusted LinkMesh sirens'), trailing: const Icon(Icons.open_in_new), onTap: state.openSirenAccessSettings),
             const _SettingsHeader('Help & feedback'),
             ListTile(leading: const Icon(Icons.support_agent_rounded, color: _blue), title: const Text('Complaint & review chat'), subtitle: const Text('Send feedback in a simple chatbox'), trailing: const Icon(Icons.chevron_right), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FeedbackChatScreen(state: state)))),
             const _SettingsHeader('DEVELOPER INFORMATION'),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Reset all local app data'), onTap: () => _confirmClear(context, 'Reset LinkMesh data?', 'Peers, messages, groups, community posts and calls will be removed from this phone.', state.clearLocalData)),
             const ListTile(leading: Icon(Icons.code_rounded), title: Text('App Developed by nomi Developer'), subtitle: Text('nomi developer')),
-            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.3 ACTIVE')),
+            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.3.1 ACTIVE')),
             ],
           ),
         ),
