@@ -145,7 +145,26 @@ class _MainShellState extends State<MainShell> {
           if (index != 4) IconButton(tooltip: 'Community chat', onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CommunityScreen(state: widget.state))), icon: const Icon(Icons.forum_rounded, color: _blue)),
         ],
       ),
-      body: IndexedStack(index: index, children: screens),
+      body: Stack(children: [
+        IndexedStack(index: index, children: screens),
+        if (widget.state.sirenPlaying)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: Material(
+              elevation: 12,
+              color: Colors.red.shade700,
+              borderRadius: BorderRadius.circular(16),
+              child: ListTile(
+                leading: const Icon(Icons.notifications_active_rounded, color: Colors.white),
+                title: const Text('Urgent siren received', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Tap STOP to silence this phone', style: TextStyle(color: Colors.white70)),
+                trailing: FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.red.shade800), onPressed: widget.state.stopSirenSound, child: const Text('STOP')),
+              ),
+            ),
+          ),
+      ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         onDestinationSelected: (value) => setState(() => index = value),
@@ -1076,6 +1095,7 @@ class SettingsScreen extends StatelessWidget {
               subtitle: Text(state.networkRunning ? 'Discovery active' : 'Discovery stopped'),
             ),
             const _SettingsHeader('Chats, calls & data'),
+            ListTile(leading: const Icon(Icons.music_note_rounded), title: const Text('Incoming call ringtone'), subtitle: Text('${state.selectedRingtoneLabel} • loud'), trailing: const Icon(Icons.chevron_right), onTap: () => _chooseRingtone(context)),
             ListTile(leading: const Icon(Icons.history), title: const Text('Call history'), subtitle: Text('${state.calls.length} calls • tap to view'), trailing: IconButton(tooltip: 'Clear call history', icon: const Icon(Icons.delete_sweep_outlined), onPressed: () => _confirmClear(context, 'Clear call history?', 'All call records on this phone will be removed.', state.clearCallHistory)), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CallHistoryScreen(state: state)))),
             ListTile(leading: const Icon(Icons.chat_bubble_outline), title: const Text('Clear message history'), subtitle: Text('${state.messages.length} personal and group messages'), trailing: const Icon(Icons.delete_outline), onTap: () => _confirmClear(context, 'Clear all messages?', 'Personal and group message history on this phone will be removed.', state.clearMessages)),
             ListTile(leading: const Icon(Icons.forum_outlined), title: const Text('Clear community chat'), subtitle: Text('${state.posts.length} community messages'), trailing: const Icon(Icons.delete_outline), onTap: () => _confirmClear(context, 'Clear community chat?', 'Community messages stored on this phone will be removed.', state.clearCommunityHistory)),
@@ -1083,11 +1103,13 @@ class SettingsScreen extends StatelessWidget {
             ListTile(leading: const Icon(Icons.monitor_heart), title: const Text('Diagnostics'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => DiagnosticsScreen(state: state)))),
             ListTile(leading: const Icon(Icons.volume_up_rounded, color: Colors.red), title: const Text('Allow urgent siren in silent mode'), subtitle: const Text('Grant one-time Android Do Not Disturb access for trusted LinkMesh sirens'), trailing: const Icon(Icons.open_in_new), onTap: state.openSirenAccessSettings),
             const _SettingsHeader('Help & feedback'),
-            ListTile(leading: const Icon(Icons.support_agent_rounded, color: _blue), title: const Text('Complaint & review chat'), subtitle: const Text('Send feedback in a simple chatbox'), trailing: const Icon(Icons.chevron_right), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FeedbackChatScreen(state: state)))),
+            ListTile(leading: const Icon(Icons.support_agent_rounded, color: _blue), title: const Text('Complaint & review chat'), subtitle: const Text('Write feedback or email Servixa support'), trailing: const Icon(Icons.chevron_right), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => FeedbackChatScreen(state: state)))),
+            ListTile(leading: const Icon(Icons.email_outlined, color: _blue), title: const Text('Email Servixa support'), subtitle: const Text('servixaa@gmail.com'), trailing: const Icon(Icons.open_in_new), onTap: state.openComplaintEmail),
             const _SettingsHeader('DEVELOPER INFORMATION'),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Reset all local app data'), onTap: () => _confirmClear(context, 'Reset LinkMesh data?', 'Peers, messages, groups, community posts and calls will be removed from this phone.', state.clearLocalData)),
-            const ListTile(leading: Icon(Icons.code_rounded), title: Text('App Developed by nomi Developer'), subtitle: Text('nomi developer')),
-            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.3.2 ACTIVE')),
+            const ListTile(leading: Icon(Icons.business_rounded), title: Text('Developed by Servixa Ltd'), subtitle: Text('Nomi Developer / Abdullah Developer')),
+            ListTile(leading: const Icon(Icons.alternate_email_rounded), title: const Text('Servixa email'), subtitle: const Text('servixaa@gmail.com'), trailing: const Icon(Icons.open_in_new), onTap: state.openComplaintEmail),
+            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.4.0 ACTIVE')),
             ],
           ),
         ),
@@ -1124,6 +1146,21 @@ class SettingsScreen extends StatelessWidget {
       const ListTile(title: Text('Choose app theme', style: TextStyle(fontWeight: FontWeight.bold))),
       ListTile(leading: const Icon(Icons.light_mode_rounded), title: const Text('Light theme'), trailing: Icon(state.darkMode ? Icons.radio_button_unchecked : Icons.radio_button_checked, color: _blue), onTap: () { state.toggleTheme(false); Navigator.pop(sheetContext); }),
       ListTile(leading: const Icon(Icons.dark_mode_rounded), title: const Text('Dark theme'), trailing: Icon(state.darkMode ? Icons.radio_button_checked : Icons.radio_button_unchecked, color: _blue), onTap: () { state.toggleTheme(true); Navigator.pop(sheetContext); }),
+    ])));
+  }
+
+  void _chooseRingtone(BuildContext context) {
+    showModalBottomSheet<void>(context: context, builder: (sheetContext) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      const ListTile(title: Text('Choose a loud call ringtone', style: TextStyle(fontWeight: FontWeight.bold)), subtitle: Text('Tap a tone to select and preview it')),
+      for (var choice = 0; choice < AppState.ringtoneLabels.length; choice++)
+        ListTile(
+          leading: const Icon(Icons.volume_up_rounded, color: _blue),
+          title: Text(AppState.ringtoneLabels[choice]),
+          subtitle: Text(choice == 0 ? 'Classic ringing tone' : choice == 1 ? 'Fast pulse alert' : 'Strong dual-tone alert'),
+          trailing: Icon(state.ringtoneChoice == choice ? Icons.radio_button_checked : Icons.radio_button_unchecked, color: _blue),
+          onTap: () => state.setRingtoneChoice(choice),
+        ),
+      const SizedBox(height: 8),
     ])));
   }
 
@@ -1171,9 +1208,9 @@ class _FeedbackChatScreenState extends State<FeedbackChatScreen> {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.state,
     builder: (_, __) => Scaffold(
-      appBar: AppBar(title: const Text('Complaint & Review')),
+      appBar: AppBar(title: const Text('Complaint & Review'), actions: [IconButton(tooltip: 'Email Servixa', onPressed: () => widget.state.openComplaintEmail(message: input.text), icon: const Icon(Icons.email_outlined))]),
       body: Column(children: [
-        const Material(color: Color(0xFFE0F2FE), child: ListTile(leading: CircleAvatar(child: Icon(Icons.support_agent_rounded)), title: Text('LinkMesh Support'), subtitle: Text('Describe an issue or leave a review below. Feedback is saved securely on this phone for support export.'))),
+        const Material(color: Color(0xFFE0F2FE), child: ListTile(leading: CircleAvatar(child: Icon(Icons.support_agent_rounded)), title: Text('Servixa Support'), subtitle: Text('Write below, then tap the email button to send it to servixaa@gmail.com.'))),
         Expanded(child: ListView(padding: const EdgeInsets.all(12), children: [
           const Align(alignment: Alignment.centerLeft, child: Card(child: Padding(padding: EdgeInsets.all(12), child: Text('Hello! How can we improve LinkMesh for you?')))),
           ...widget.state.feedbackMessages.map((message) => Align(
@@ -1187,6 +1224,7 @@ class _FeedbackChatScreenState extends State<FeedbackChatScreen> {
             ),
           )),
         ])),
+        Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 8), child: SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () => widget.state.openComplaintEmail(message: input.text.isNotEmpty ? input.text : (widget.state.feedbackMessages.isEmpty ? '' : widget.state.feedbackMessages.last)), icon: const Icon(Icons.email_outlined), label: const Text('EMAIL SERVIXA SUPPORT')))),
         _Composer(controller: input, hint: 'Write complaint or review', send: () { final text = input.text; input.clear(); widget.state.submitFeedback(text); }),
       ]),
     ),
