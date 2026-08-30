@@ -44,6 +44,7 @@ class _BackgroundMeshHandler extends TaskHandler {
   final NotificationService _notifications = NotificationService();
   StreamSubscription<MeshPacket>? _subscription;
   bool _alertsEnabled = true;
+  final Set<String> _seenSirenIds = {};
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -60,6 +61,19 @@ class _BackgroundMeshHandler extends TaskHandler {
   }
 
   Future<void> _onPacket(MeshPacket packet) async {
+    if (packet.type == 'siren') {
+      final id = packet.payload['id']?.toString() ?? '';
+      final host = packet.payload['host']?.toString() ?? '';
+      if (id.isNotEmpty) {
+        if (packet.payload['relayed'] == true) {
+          await _mesh.sendRoutedPacket(packet.senderId, 'ack', {'id': id});
+        } else if (host.isNotEmpty) {
+          await _mesh.sendToHost(host, 'ack', {'id': id});
+        }
+        if (!_seenSirenIds.add(id)) return;
+        if (_seenSirenIds.length > 500) _seenSirenIds.remove(_seenSirenIds.first);
+      }
+    }
     final previous = await FlutterForegroundTask.getData<String>(key: BackgroundMeshService._queueKey);
     List<dynamic> queue;
     try { queue = previous == null ? [] : List<dynamic>.from(jsonDecode(previous) as List); } catch (_) { queue = []; }
