@@ -524,7 +524,7 @@ class _ChatScreenState extends State<ChatScreen> {
       icon: const Icon(Icons.notifications_active_rounded, color: Colors.red, size: 42),
       title: Text('Sound siren on ${widget.peer.name}?'),
       content: const Text('This sends an urgent alarm-priority alert. It may sound while the other phone is silent when LinkMesh has Do Not Disturb access.'),
-      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () { Navigator.pop(dialogContext); widget.state.sendSiren(peer: widget.peer); }, child: const Text('SEND SIREN'))],
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')), FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.red), onPressed: () async { Navigator.pop(dialogContext); final delivered = await widget.state.sendSiren(peer: widget.peer); if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(delivered ? 'Siren delivered to ${widget.peer.name}' : '${widget.peer.name} is not reachable. Siren was not sounded on this phone.'))); }, child: const Text('SEND SIREN'))],
     ));
   }
 }
@@ -1087,7 +1087,7 @@ class SettingsScreen extends StatelessWidget {
             const _SettingsHeader('DEVELOPER INFORMATION'),
             ListTile(leading: const Icon(Icons.delete_forever, color: Colors.red), title: const Text('Reset all local app data'), onTap: () => _confirmClear(context, 'Reset LinkMesh data?', 'Peers, messages, groups, community posts and calls will be removed from this phone.', state.clearLocalData)),
             const ListTile(leading: Icon(Icons.code_rounded), title: Text('App Developed by nomi Developer'), subtitle: Text('nomi developer')),
-            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.3.1 ACTIVE')),
+            const ListTile(leading: Icon(Icons.info_outline), title: Text('App Version'), subtitle: Text('V4.3.2 ACTIVE')),
             ],
           ),
         ),

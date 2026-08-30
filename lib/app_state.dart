@@ -57,6 +57,7 @@ class AppState extends ChangeNotifier {
   String? networkError;
   String? callError;
   final Map<String, Completer<void>> _deliveryAcks = {};
+  final Set<String> _seenSirenIds = {};
   final Set<String> _retryingPeers = {};
   final Set<String> _avatarRequests = {};
   final Map<String, _IncomingAttachment> _incomingAttachments = {};
@@ -347,9 +348,17 @@ class AppState extends ChangeNotifier {
       unawaited(notifications.showSos(packet.senderName, detail));
       unawaited(_playSiren());
     } else if (packet.type == 'siren') {
-      final text = packet.payload['text']?.toString() ?? 'Urgent siren alert';
-      unawaited(notifications.showSiren(packet.senderName, text));
-      unawaited(_playSiren());
+      if (packet.payload['relayed'] == true) {
+        unawaited(mesh.sendRoutedPacket(packet.senderId, 'ack', {'id': id}));
+      } else if (host.isNotEmpty) {
+        unawaited(mesh.sendToHost(host, 'ack', {'id': id}));
+      }
+      if (_seenSirenIds.add(id)) {
+        if (_seenSirenIds.length > 500) _seenSirenIds.remove(_seenSirenIds.first);
+        final text = packet.payload['text']?.toString() ?? 'Urgent siren alert';
+        unawaited(notifications.showSiren(packet.senderName, text));
+        unawaited(_playSiren());
+      }
     } else if (packet.type == 'call_signal') {
       unawaited(callService.receive(packet.senderId, packet.senderName, packet.payload));
       if (packet.payload['kind'] == 'offer') unawaited(notifications.showIncomingCall(packet.senderName, video: packet.payload['video'] == true));
@@ -385,15 +394,26 @@ class AppState extends ChangeNotifier {
   }
   Future<void> sendGroupMessage(MeshGroup group, String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); messages.add(ChatMessage(id: id, peerId: deviceId, sender: username, text: clean, sentAt: DateTime.now(), mine: true, groupId: group.id)); notifyListeners(); if (group.isPrivate) { for (final memberId in group.members.where((id) => id != deviceId)) { final peer = peers.where((p) => p.id == memberId && p.online && !p.blocked).firstOrNull; final sent = peer != null && await mesh.sendToHost(peer.host, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); if (!sent) await mesh.sendRoutedPacket(memberId, 'group_message', {'id': id, 'groupId': group.id, 'text': clean}); } } else { await mesh.broadcastRoutedPacket('group_message', {'id': id, 'groupId': group.id, 'text': clean}); } await _persist(); }
   Future<void> postCommunity(String text) async { final clean = text.trim(); if (clean.isEmpty) return; final id = const Uuid().v4(); posts.insert(0, CommunityPost(id: id, author: username, text: clean, createdAt: DateTime.now())); notifyListeners(); await mesh.broadcastRoutedPacket('post', {'id': id, 'text': clean}); await _persist(); }
-  Future<void> sendSiren({MeshPeer? peer}) async {
-    await _playSiren();
-    final payload = {'id': const Uuid().v4(), 'text': peer == null ? 'Community siren activated' : 'Urgent siren from $username'};
+  Future<bool> sendSiren({MeshPeer? peer}) async {
+    final id = const Uuid().v4();
+    final payload = {'id': id, 'text': peer == null ? 'Community siren activated' : 'Urgent siren from $username'};
     if (peer == null) {
+      await _playSiren();
       await mesh.broadcastRoutedPacket('siren', payload);
-    } else {
-      final sent = peer.online && await mesh.sendToHost(peer.host, 'siren', payload);
-      if (!sent) await mesh.sendRoutedPacket(peer.id, 'siren', payload);
+      return true;
     }
+    if (peer.blocked || !peer.online) return false;
+    final ack = Completer<void>();
+    _deliveryAcks[id] = ack;
+    var delivered = false;
+    for (var attempt = 0; attempt < 3 && !delivered; attempt++) {
+      await mesh.sendToHost(peer.host, 'siren', payload);
+      await mesh.sendRoutedPacket(peer.id, 'siren', payload);
+      try { await ack.future.timeout(const Duration(seconds: 2)); delivered = true; }
+      on TimeoutException { /* Retry with the same ID; receiver de-duplicates it. */ }
+    }
+    _deliveryAcks.remove(id);
+    return delivered;
   }
   Future<void> triggerSos() async { sosActive = true; Position? position; try { var permission = await Geolocator.checkPermission(); if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission(); if (permission == LocationPermission.always || permission == LocationPermission.whileInUse) position = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 8))); } on Object { position = null; } final id = const Uuid().v4(); final text = position == null ? 'SOS ACTIVE — emergency assistance requested.' : 'SOS ACTIVE — location ${position.latitude}, ${position.longitude}'; posts.insert(0, CommunityPost(id: id, author: username, text: text, createdAt: DateTime.now(), emergency: true, latitude: position?.latitude, longitude: position?.longitude)); notifyListeners(); await mesh.broadcastRoutedPacket('sos', {'id': id, 'text': 'Emergency assistance requested.', 'latitude': position?.latitude, 'longitude': position?.longitude}); await _persist(); }
   void stopSos() { sosActive = false; notifyListeners(); }
