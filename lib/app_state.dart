@@ -13,6 +13,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:crypto/crypto.dart';
 import 'package:image/image.dart' as image_lib;
 import 'package:just_audio/just_audio.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'models/models.dart';
 import 'services/local_mesh_service.dart';
 import 'services/local_store.dart';
@@ -27,6 +28,7 @@ class AppState extends ChangeNotifier {
   AppState() {
     callService = CallService(_sendCallSignal);
     callService.addListener(_handleCallState);
+    p2p.addListener(_handleP2pState);
   }
   final LocalMeshService mesh = LocalMeshService();
   final NotificationService notifications = NotificationService();
@@ -36,6 +38,9 @@ class AppState extends ChangeNotifier {
   final AudioPlayer _alertPlayer = AudioPlayer();
   StreamSubscription<MeshPacket>? _sub;
   Timer? _peerSweep;
+  Timer? _sirenTimer;
+  Timer? _ringtonePreviewTimer;
+  Timer? _p2pRefreshTimer;
   SharedPreferences? _prefs;
   LocalStore? _store;
   Future<void> _persistQueue = Future<void>.value();
@@ -52,7 +57,9 @@ class AppState extends ChangeNotifier {
   bool backgroundNotifications = true;
   bool automaticDirectConnect = true;
   bool networkRunning = false;
+  bool sirenPlaying = false;
   bool initialized = false;
+  int ringtoneChoice = 0;
   String? startupWarning;
   String? networkError;
   String? callError;
@@ -95,6 +102,7 @@ class AppState extends ChangeNotifier {
       darkMode = _prefs?.getBool('darkMode') ?? false;
       backgroundNotifications = _prefs?.getBool('backgroundNotifications') ?? true;
       automaticDirectConnect = _prefs?.getBool('automaticDirectConnect') ?? true;
+      ringtoneChoice = (_prefs?.getInt('ringtoneChoice') ?? 0).clamp(0, 2).toInt();
       feedbackMessages.addAll(_prefs?.getStringList('feedbackMessages') ?? const []);
       if (onboarded && !validMeshSecret(meshCode)) onboarded = false;
       final migrated = _prefs?.getBool('sqliteMigrated') ?? false;
@@ -149,7 +157,7 @@ class AppState extends ChangeNotifier {
   }
   Future<void> _persistNow() async {
     final p = _prefs;
-    if (p != null) { await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode); await p.setBool('backgroundNotifications', backgroundNotifications); await p.setBool('automaticDirectConnect', automaticDirectConnect); await p.setStringList('feedbackMessages', feedbackMessages.take(100).toList()); await p.setString('profilePhotoPath', profilePhotoPath); await p.setString('profilePhotoHash', profilePhotoHash); await p.setString('pendingPairDeviceId', pendingPairDeviceId); await p.setString('pendingPairDeviceName', pendingPairDeviceName); }
+    if (p != null) { await p.setString('username', username); await p.setString('meshCode', meshCode); await p.setBool('onboarded', onboarded); await p.setBool('darkMode', darkMode); await p.setBool('backgroundNotifications', backgroundNotifications); await p.setBool('automaticDirectConnect', automaticDirectConnect); await p.setInt('ringtoneChoice', ringtoneChoice); await p.setStringList('feedbackMessages', feedbackMessages.take(100).toList()); await p.setString('profilePhotoPath', profilePhotoPath); await p.setString('profilePhotoHash', profilePhotoHash); await p.setString('pendingPairDeviceId', pendingPairDeviceId); await p.setString('pendingPairDeviceName', pendingPairDeviceName); }
     if (messages.length > 2000) messages.removeRange(0, messages.length - 2000);
     final store = _store;
     if (store == null) return;
@@ -165,7 +173,16 @@ class AppState extends ChangeNotifier {
     final random = Random.secure();
     return List<int>.generate(32, (_) => random.nextInt(256)).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
   }
-  Future<void> setProfile(String name, String code) async { username = name.trim().isEmpty ? 'Mesh User' : name.trim(); meshCode = code.trim(); if (!validMeshSecret(meshCode)) return; onboarded = true; await _persist(); notifyListeners(); await startNetwork(); }
+  Future<void> setProfile(String name, String code) async { username = name.trim().isEmpty ? 'Mesh User' : name.trim(); meshCode = code.trim(); if (!validMeshSecret(meshCode)) return; onboarded = true; await _persist(); notifyListeners(); await requestInitialPermissions(); await startNetwork(); }
+
+  Future<void> requestInitialPermissions() async {
+    if (!Platform.isAndroid) return;
+    await Permission.notification.request();
+    await Permission.microphone.request();
+    await Permission.camera.request();
+    await Permission.locationWhenInUse.request();
+    try { await p2p.prepare(); } catch (error) { debugPrint('Initial nearby setup incomplete: $error'); }
+  }
   Future<void> updateProfile(String name) async { username = name.trim().isEmpty ? username : name.trim(); await _persist(); notifyListeners(); if (networkRunning) { await restartNetwork(); } }
   Future<void> updateMeshCode(String code) async { if (!validMeshSecret(code)) return; meshCode = code.trim(); await _persist(); notifyListeners(); await restartNetwork(); }
 
@@ -224,10 +241,10 @@ class AppState extends ChangeNotifier {
       _peerSweep ??= Timer.periodic(const Duration(seconds: 2), (_) => _expirePeers());
       if (pendingPairDeviceId.isNotEmpty) unawaited(mesh.sendRoutedPacket(pendingPairDeviceId, 'pair_request', {'targetId': pendingPairDeviceId}));
       if (automaticDirectConnect && Platform.isAndroid) {
-        Future<void>.delayed(const Duration(seconds: 5), () async {
+        Future<void>.delayed(const Duration(seconds: 2), () async {
           if (networkRunning && peers.every((peer) => !peer.online)) {
             await p2p.startAutomatic(deviceId);
-            if (p2p.connected || p2p.hosting) await restartNetwork();
+            await mesh.refreshNetwork();
           }
         });
       }
@@ -239,12 +256,20 @@ class AppState extends ChangeNotifier {
   Future<void> enterBackground() async {
     if (!onboarded || callService.active) return;
     if (networkRunning) await stopNetwork();
-    await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode, avatarHash: profilePhotoHash, alertsEnabled: backgroundNotifications);
+    await backgroundMesh.start(id: deviceId, name: username, meshCode: meshCode, avatarHash: profilePhotoHash, alertsEnabled: backgroundNotifications, ringtoneChoice: ringtoneChoice, automaticDirectConnect: automaticDirectConnect, startP2p: automaticDirectConnect && !p2p.connected && !p2p.hosting);
   }
   Future<void> resumeFromBackground() async { await backgroundMesh.stop(); for (final packet in await backgroundMesh.drainPackets()) { _onPacket(packet); } if (onboarded && !networkRunning) await startNetwork(); }
   Future<void> createP2pGroup() async { await p2p.createGroup(); await restartNetwork(); }
   Future<void> connectP2pHost(dynamic device) async { await p2p.connect(device); await restartNetwork(); }
   Future<void> disconnectP2p() async { await p2p.disconnect(); await restartNetwork(); }
+
+  void _handleP2pState() {
+    _p2pRefreshTimer?.cancel();
+    _p2pRefreshTimer = Timer(const Duration(milliseconds: 500), () async {
+      if (networkRunning && (p2p.connected || p2p.hosting)) await mesh.refreshNetwork();
+      notifyListeners();
+    });
+  }
 
   void _expirePeers() {
     final now = DateTime.now(); bool changed = false;
@@ -361,7 +386,7 @@ class AppState extends ChangeNotifier {
       }
     } else if (packet.type == 'call_signal') {
       unawaited(callService.receive(packet.senderId, packet.senderName, packet.payload));
-      if (packet.payload['kind'] == 'offer') unawaited(notifications.showIncomingCall(packet.senderName, video: packet.payload['video'] == true));
+      if (packet.payload['kind'] == 'offer') unawaited(notifications.showIncomingCall(packet.senderName, video: packet.payload['video'] == true, ringtoneChoice: ringtoneChoice));
     } else if (packet.type == 'post') {
       posts.insert(0, CommunityPost(id: id, author: packet.senderName, text: packet.payload['text']?.toString() ?? '', createdAt: DateTime.now()));
     }
@@ -398,7 +423,6 @@ class AppState extends ChangeNotifier {
     final id = const Uuid().v4();
     final payload = {'id': id, 'text': peer == null ? 'Community siren activated' : 'Urgent siren from $username'};
     if (peer == null) {
-      await _playSiren();
       await mesh.broadcastRoutedPacket('siren', payload);
       return true;
     }
@@ -478,8 +502,48 @@ class AppState extends ChangeNotifier {
   }
   Future<void> setAutomaticDirectConnect(bool value) async {
     automaticDirectConnect = value;
-    if (!value) await p2p.stopAutomatic();
+    if (value) {
+      await requestInitialPermissions();
+      if (networkRunning) unawaited(p2p.startAutomatic(deviceId));
+    } else {
+      await p2p.stopAutomatic();
+    }
     await _persist(); notifyListeners();
+  }
+  static const ringtoneLabels = ['Classic LinkMesh', 'Pulse Alert', 'Dual Tone'];
+  String get selectedRingtoneLabel => ringtoneLabels[ringtoneChoice];
+  String _ringtoneAsset(int choice) => [
+        'assets/audio/call_ringtone.wav',
+        'assets/audio/call_ringtone_2.wav',
+        'assets/audio/call_ringtone_3.wav',
+      ][choice.clamp(0, 2).toInt()];
+  Future<void> setRingtoneChoice(int choice) async {
+    ringtoneChoice = choice.clamp(0, 2).toInt();
+    await _persist();
+    notifyListeners();
+    await previewRingtone(ringtoneChoice);
+  }
+  Future<void> previewRingtone(int choice) async {
+    if (callService.active || sirenPlaying) return;
+    _ringtonePreviewTimer?.cancel();
+    try {
+      await _alertPlayer.stop();
+      await _alertPlayer.setAsset(_ringtoneAsset(choice));
+      await _alertPlayer.setLoopMode(LoopMode.one);
+      await _alertPlayer.play();
+      _ringtonePreviewTimer = Timer(const Duration(seconds: 4), () => unawaited(_alertPlayer.stop()));
+    } catch (_) {}
+  }
+  Future<bool> openComplaintEmail({String message = ''}) async {
+    final uri = Uri(
+      scheme: 'mailto',
+      path: 'servixaa@gmail.com',
+      queryParameters: {
+        'subject': 'LinkMesh complaint / review',
+        'body': message.trim().isEmpty ? 'Hello Servixa Ltd,\n\n' : 'Hello Servixa Ltd,\n\n${message.trim()}\n',
+      },
+    );
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
   }
   Future<void> submitFeedback(String text) async {
     final clean = text.trim();
@@ -648,20 +712,42 @@ class AppState extends ChangeNotifier {
   Future<void> clearLocalData() async { peers.clear(); messages.clear(); posts.clear(); calls.clear(); groups.clear(); await _persist(); notifyListeners(); }
 
   Future<void> _playSiren() async {
-    try { await _alertPlayer.stop(); await _alertPlayer.setAsset('assets/audio/siren.wav'); await _alertPlayer.setLoopMode(LoopMode.one); await _alertPlayer.play(); Future<void>.delayed(const Duration(seconds: 12), () => _alertPlayer.stop()); } catch (_) {}
+    _sirenTimer?.cancel();
+    sirenPlaying = true;
+    notifyListeners();
+    try {
+      await _alertPlayer.stop();
+      await _alertPlayer.setAsset('assets/audio/siren.wav');
+      await _alertPlayer.setLoopMode(LoopMode.one);
+      await _alertPlayer.play();
+      _sirenTimer = Timer(const Duration(seconds: 30), () => unawaited(stopSirenSound()));
+    } catch (_) {
+      sirenPlaying = false;
+      notifyListeners();
+    }
+  }
+  Future<void> stopSirenSound() async {
+    _sirenTimer?.cancel();
+    _sirenTimer = null;
+    await _alertPlayer.stop();
+    await notifications.cancelSiren();
+    if (sirenPlaying) {
+      sirenPlaying = false;
+      notifyListeners();
+    }
   }
   Future<void> _handleCallState() async {
     notifyListeners();
     try {
       if (callService.active && !callService.connected) {
-        if (!_alertPlayer.playing) { await _alertPlayer.setAsset('assets/audio/call_ringtone.wav'); await _alertPlayer.setLoopMode(LoopMode.one); await _alertPlayer.play(); }
+        if (!_alertPlayer.playing) { await _alertPlayer.setAsset(_ringtoneAsset(ringtoneChoice)); await _alertPlayer.setLoopMode(LoopMode.one); await _alertPlayer.play(); }
       } else {
         await _alertPlayer.stop();
       }
     } catch (_) {}
   }
 
-  @override void dispose() { _peerSweep?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); unawaited(_alertPlayer.dispose()); unawaited(callService.end(notifyPeer: false)); callService.removeListener(_handleCallState); mesh.dispose(); p2p.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
+  @override void dispose() { _peerSweep?.cancel(); _sirenTimer?.cancel(); _ringtonePreviewTimer?.cancel(); _p2pRefreshTimer?.cancel(); _sub?.cancel(); for (final ack in _deliveryAcks.values) { if (!ack.isCompleted) ack.completeError(StateError('App closed')); } _deliveryAcks.clear(); unawaited(_alertPlayer.dispose()); unawaited(callService.end(notifyPeer: false)); callService.removeListener(_handleCallState); p2p.removeListener(_handleP2pState); mesh.dispose(); p2p.dispose(); final store = _store; if (store != null) unawaited(_persistQueue.whenComplete(store.close)); super.dispose(); }
 }
 
 extension FirstOrNullState<T> on Iterable<T> { T? get firstOrNull => isEmpty ? null : first; }
